@@ -13,6 +13,10 @@
    Спрайты рассчитаны на 12 пикселей: функция px(n) переводит «пиксели для клетки 12×12» в текущий размер.
    ============================================================ */
 
+/* ============================================================
+   SECTION: MAP_COLORS (цвета, упакованные в одно число)
+   Палитра, не зависящая от сезона, и функции упаковки/смешивания цветов.
+   ============================================================ */
 /* ---------- Цвета, не зависящие от сезона (в виде hex) ---------- */
 const COLORS = {
     bridgeDeck: '#a39e92',
@@ -113,8 +117,9 @@ const packPalette = palette => ({
     trunk: hexToPacked(palette.trunk)
 });
 
-/* ---------- Константы ---------- */
-
+/* ============================================================
+   SECTION: MAP_CONSTANTS (пороги снега, льда, глубины и дизеринга)
+   ============================================================ */
 // Температуры (с учётом сезона), при которых выпадает снег и замерзает вода.
 const SNOW_TEMPERATURE = 0.30;       // холоднее — на земле лежит снег
 const ICE_TEMPERATURE = 0.16;        // холоднее — у берега замерзает вода
@@ -134,7 +139,10 @@ function waterShadeIndex(depth) {
 const STEP_AMOUNTS = Int32Array.from([-30, -15, 0, 15, 28]); // ступени светотени холмов, в долях от 256
 const BAYER = Float32Array.from([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5], v => (v + 0.5) / 16);
 
-/* ---------- Детерминированные «случайности»: не меняются при перерисовке ---------- */
+/* ============================================================
+   SECTION: MAP_HASH & NOISE (детерминированный шум)
+   «Случайности», которые не меняются при перерисовке, и плавный шум.
+   ============================================================ */
 // Хеш с хорошим перемешиванием битов: простые формулы вида x*a ^ y*b дают заметные узоры (полосы, кирпичи).
 function tileHash(x, y, k) {
     let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(k, 1274126177)) | 0;
@@ -177,10 +185,13 @@ class LatticeNoise {
     }
 }
 
-/* Светотень холмов не зависит от сезона, поэтому считается один раз: для каждого пикселя, который надо изменить,
+/* ============================================================
+   SECTION: MAP_SHADING (предрасчёт светотени холмов)
+   Светотень не зависит от сезона, поэтому считается один раз: для каждого пикселя, который надо изменить,
    запоминаем индекс и «код» (ступень светотени + признак оврага). При каждой перерисовке остаётся только применить список.
    Горячий цикл вынесен в отдельную функцию с простыми аргументами: так движок JavaScript оптимизирует его
-   лучше, чем кусок большого метода. Идём строка за строкой — память читается последовательно. */
+   лучше, чем кусок большого метода. Идём строка за строкой — память читается последовательно.
+   ============================================================ */
 function computeHillShading({ hills, waterMask, flags, tileOfColumn, width, tile, strength, ravineWidth, valleyNoise, capacity }) {
     const size = width / tile;
     const last = width * width - 1;
@@ -230,8 +241,10 @@ function applyHillShading(pixels, { index, code, count }) {
     }
 }
 
-/* Маленький пиксельный буфер для рисунков (дома, руды, эфир): прозрачный фон, рисование фигур, контур.
-   Рисунок готовится один раз, а потом копируется на карту. */
+/* ============================================================
+   SECTION: PIXEL_BUFFER (мини-буфер для спрайтов)
+   Прозрачный фон, рисование фигур, контур. Рисунок готовится один раз, потом копируется на карту.
+   ============================================================ */
 class PixelBuffer {
     constructor(width, height) {
         this.width = width;
@@ -276,9 +289,14 @@ class PixelBuffer {
 }
 
 /* ============================================================
-   MapPainter
+   SECTION: MAP_PAINTER
+   Рисует карту целиком в один холст, пиксель за пикселем.
    ============================================================ */
 class MapPainter {
+    /* ==============================================================
+       SECTION: CONSTRUCTOR & MAIN
+       ============================================================== */
+
     constructor(map, options = {}) {
         this.map = map;
         this.options = {
@@ -317,7 +335,9 @@ class MapPainter {
         for (const [name, hex] of Object.entries(COLORS)) this.colors[name] = hexToPacked(hex);
     }
 
-    /* ---------- Главный метод ---------- */
+    /* ==============================================================
+       SECTION: MAIN (paint + базовые операции)
+       ============================================================== */
 
     // view: 'terrain' | 'temperature' | 'regions'. Возвращает холст с готовой картой.
     paint({ view, seasonName, showBorders, mood }) {
@@ -372,11 +392,21 @@ class MapPainter {
         return this.canvas;
     }
 
-    /* ---------- Вспомогательные ---------- */
-
     // «Пиксели для клетки 12×12» -> пиксели текущей клетки.
     px(n) {
         return Math.round(n * this.tileSize / 12);
+    }
+
+    // То же, но не меньше 1 пикселя: тонкие детали спрайтов не должны исчезать при мелкой клетке.
+    pxMin(n) {
+        return Math.max(1, this.px(n));
+    }
+
+    // Клетка, которой принадлежит пиксель карты k (индекс y * size + x).
+    tileOf(k) {
+        const x = k % this.width;
+        return Math.floor((k - x) / this.width / this.tileSize) * this.map.size
+            + Math.floor(x / this.tileSize);
     }
 
     forEachTile(callback) {
@@ -390,6 +420,10 @@ class MapPainter {
     seasonalTemperature(i) {
         return this.map.temperature[i] + this.season.tempShift;
     }
+
+    /* ==============================================================
+       SECTION: PIXEL PRIMITIVES
+       ============================================================== */
 
     put(x, y, color) {
         if (x >= 0 && y >= 0 && x < this.width && y < this.width) this.pixels[y * this.width + x] = color;
@@ -423,7 +457,9 @@ class MapPainter {
         return points;
     }
 
-    /* ---------- 1. Фон ---------- */
+    /* ==============================================================
+       SECTION: BACKGROUND (фон и дизеринг)
+       ============================================================== */
 
     /* Сглаживание.
        Считаем, что цвет клетки «живёт» в её центре. Любой пиксель лежит внутри квадрата, углы которого — центры
@@ -576,6 +612,10 @@ class MapPainter {
         return true;
     }
 
+    /* ==============================================================
+       SECTION: COAST SMOOTHING
+       ============================================================== */
+
     /* Скругление берега. Береговая линия из квадратных клеток и дизеринга — ступенчатая и «зашумлённая». Мажоритарный
        фильтр по маске воды (каждый пиксель становится водой или сушей — как большинство пикселей в окне радиуса
        coastSmoothing) убирает ступеньки и скругляет углы; чем больше радиус, тем круглее берег. 0 — выключить. */
@@ -676,6 +716,10 @@ class MapPainter {
         this.coastCache = { source: map.terrain, key, mask: next, changed: Int32Array.from(changed), sources: Int32Array.from(sources) };
     }
 
+    /* ==============================================================
+       SECTION: TILE COLOR (цвет клетки по виду)
+       ============================================================== */
+
     // Цвет каждой клетки и признак «вода».
     buildTileColors() {
         const count = this.map.size * this.map.size;
@@ -765,7 +809,9 @@ class MapPainter {
         return shadeFast(color, STEP_AMOUNTS[step + 2]);
     }
 
-    /* ---------- 2. Холмы и овраги ---------- */
+    /* ==============================================================
+       SECTION: HILLS
+       ============================================================== */
 
     /* На равнинах — лёгкая светотень «карты холмов» (свет слева сверху, как у гор и деревьев) плюс тёмные овраги
        в сухих местах. Карта холмов — шум плюс крупный рельеф суши из генератора; считается один раз на карту. */
@@ -845,7 +891,9 @@ class MapPainter {
         return height;
     }
 
-    /* ---------- 3. Берега ---------- */
+    /* ==============================================================
+       SECTION: SHORES
+       ============================================================== */
 
     /* Тип берега задаёт генератор (map.shore). Расстояние от воды считаем в пикселях: волной от воды вглубь суши.
          пляж     — полоса мокрого, потом сухого песка; в воде у берега белая пена;
@@ -876,7 +924,6 @@ class MapPainter {
             if (k < W * W - W) around[n++] = k + W;
             return n;
         };
-        const tileOf = k => Math.floor(k / W / T) * size + Math.floor((k % W) / T);
 
         // 1) семена: каждый пиксель суши прямо у воды. Тип берега задан для клеток, а сглаженная береговая линия заходит
         // в соседние клетки (в том числе в воду, у которой типа нет), поэтому тип берём у самой клетки пикселя, а если у неё
@@ -952,7 +999,7 @@ class MapPainter {
                 if (d <= wet) color = c.wetSand;
                 else if (threshold < 1 - (d - wet) / (reach - wet + 1)) color = hashUnit(gx, gy, 620) < 0.18 ? c.wetSand : c.sand;
                 if (color !== 0) {
-                    const snow = this.snowCoverage(tileOf(k));
+                    const snow = this.snowCoverage(this.tileOf(k));
                     if (snow > 0) color = mixPacked(color, this.packed.snow, 0.9 * snow);
                 }
             } else if (type === Shore.ROCKY) {
@@ -991,7 +1038,7 @@ class MapPainter {
             }
         }
         for (const k of foam) {
-            if (this.seasonalTemperature(tileOf(k)) < ICE_TEMPERATURE) continue;
+            if (this.seasonalTemperature(this.tileOf(k)) < ICE_TEMPERATURE) continue;
             const gx = k % W, gy = (k - gx) / W;
             const threshold = BAYER[(gy & 3) * 4 + (gx & 3)];
             const mark = kind[k];
@@ -1037,7 +1084,9 @@ class MapPainter {
         }
     }
 
-    /* ---------- 4. Рельеф гор ---------- */
+    /* ==============================================================
+       SECTION: MOUNTAIN RELIEF
+       ============================================================== */
 
     /* Горы — «карта высот», раскрашенная светотенью (свет слева сверху), а не спрайты. Высота клетки берётся из
        генератора, размывается по соседям и интерполируется до пикселя; к ней добавляются острые гребни (шум) и
@@ -1047,7 +1096,6 @@ class MapPainter {
        Острота гор настраивается параметром peakSharpness (0 — округлые, 1 — острые). */
 
     // Карта высот гор по пикселям. От сезона не зависит, поэтому кэшируется.
-    //
     // Как у настоящих гор на спутниковых снимках: огибающая (высота клеток из генератора) умножается на «складчатый»
     // рельеф — несколько масштабов гребней (|шум − ½|), где мелкие гребни вырастают только на крупных (мультифрактал).
     // Получаются ветвящиеся хребты и долины, а искажение координат (warp) делает их извилистыми, а не «ячеистыми».
@@ -1325,7 +1373,9 @@ class MapPainter {
         return 0.95 - fraction * 0.6;
     }
 
-    /* ---------- 3. Реки ---------- */
+    /* ==============================================================
+       SECTION: RIVERS
+       ============================================================== */
 
     // Ширина реки в пикселях по её уровню (глубине).
     // Ширина реки в клетке по количеству воды: ручей — 2–3 пикселя, большая река у устья — до 14.
@@ -1357,12 +1407,11 @@ class MapPainter {
         const W = this.width;
         const size = this.map.size;
         const pixels = this.pixels;
-        const tileOf = k => Math.floor(Math.floor(k / W) / T) * size + Math.floor((k % W) / T);
         const iceRiver = tile => this.seasonalTemperature(tile) < RIVER_ICE_TEMPERATURE;
         const bankColors = new Map();                              // тёмный цвет берега считаем один раз на каждый цвет земли
 
         for (const k of solid) {                                   // сердцевина реки — сплошной цвет
-            const shades = iceRiver(tileOf(k)) ? this.packed.ice : this.packed.riverShades;
+            const shades = iceRiver(this.tileOf(k)) ? this.packed.ice : this.packed.riverShades;
             pixels[k] = shades[mask[k] - 1];
         }
 
@@ -1371,7 +1420,7 @@ class MapPainter {
             const d = distance[k];
             if (d <= 0) continue;
             const xx = k % W, yy = (k - xx) / W;
-            const shades = iceRiver(tileOf(k)) ? this.packed.ice : this.packed.riverShades;
+            const shades = iceRiver(this.tileOf(k)) ? this.packed.ice : this.packed.riverShades;
             const color = shades[mask[k] - 1];                      // свой уровень пикселя, как у сердцевины, — без ступенек цвета у кромки
             const deep = d === 1 && ((xx > 0 && mask[k - 1] > 0 && distance[k - 1] !== 1) || (xx < W - 1 && mask[k + 1] > 0 && distance[k + 1] !== 1)
                 || (yy > 0 && mask[k - W] > 0 && distance[k - W] !== 1) || (yy < W - 1 && mask[k + W] > 0 && distance[k + W] !== 1));
@@ -1544,7 +1593,9 @@ class MapPainter {
         else pixels[k] = hashUnit(xx, yy, 630) < 0.5 ? c.pebbleLight : c.pebbleDark;
     }
 
-    /* ---------- 4. Текстура ---------- */
+    /* ==============================================================
+       SECTION: TEXTURE
+       ============================================================== */
 
     paintTexture() {
         const map = this.map;
@@ -1659,7 +1710,9 @@ class MapPainter {
         this.pixels[k] = color;
     }
 
-    /* ---------- Тёмный стиль: цветокоррекция, туман ---------- */
+    /* ==============================================================
+       SECTION: GRADE & FOG (тёмный стиль)
+       ============================================================== */
 
     // Приглушает цвет построек в тёмном стиле.
     moodize(color) {
@@ -1753,7 +1806,9 @@ class MapPainter {
         this.put(x, y, color);
     }
 
-    /* ---------- Мрачные детали (только в тёмном стиле) ---------- */
+    /* ==============================================================
+       SECTION: PROPS (мрачные детали)
+       ============================================================== */
 
     // Кости в сухих местах, вороны, развалины, виселицы — редко и поодиночке.
     collectProps(items) {
@@ -1818,7 +1873,9 @@ class MapPainter {
         this.rect(cx + this.px(4) - 1, base - height + 2, 2, this.px(3), this.colors.crow);       // силуэт
     }
 
-    /* ---------- Дороги между поселениями ---------- */
+    /* ==============================================================
+       SECTION: ROADS
+       ============================================================== */
 
     roadWidth(level) {
         return Math.max(1, this.px([2, 3, 4][Math.min(3, Math.max(1, level)) - 1]));
@@ -1839,13 +1896,12 @@ class MapPainter {
         const size = map.size;
         const T = this.tileSize;
         const pixels = this.pixels;
-        const tileOf = k => Math.floor(Math.floor(k / W) / T) * size + Math.floor((k % W) / T);
 
         for (const k of geometry.halo) pixels[k] = mixPacked(pixels[k], dirt, 0.28);
         for (let n = 0; n < geometry.core.length; n++) {
             const k = geometry.core[n];
             let color = kinds[geometry.kind[n]];
-            const snow = this.snowCoverage(tileOf(k));
+            const snow = this.snowCoverage(this.tileOf(k));
             if (snow > 0) color = mixPacked(color, this.packed.snow, 0.75 * snow);
             pixels[k] = color;
         }
@@ -1919,7 +1975,9 @@ class MapPainter {
         return this.roadCache;
     }
 
-    /* ---------- Поселения ---------- */
+    /* ==============================================================
+       SECTION: SETTLEMENTS
+       ============================================================== */
 
     /* Поселение — ресурс клетки. Каждая клетка с поселением рисуется 1–4 домиками (число зависит от её уровня) и
        не выходит за свои границы (допуск settlementOverflow, по умолчанию 25%): так по рисунку всегда понятно, в какой
@@ -1945,7 +2003,6 @@ class MapPainter {
         const level = map.settlementLevel[i] || 1;
         const maxLevel = (map.options && map.options.settlementMaxLevel) || 4;
         const rnd = n => hashUnit(x, y, 1000 + n);
-        const n = value => Math.max(1, this.px(value));
 
         // Сколько домиков: от settlementMinHouses (уровень 1) до settlementMaxHouses (высший уровень).
         const share = (level - 1) / Math.max(1, maxLevel - 1);
@@ -1986,9 +2043,9 @@ class MapPainter {
             const chapel = k === 0 && level === maxLevel && isCenter && count >= 3;   // в центре города — каменная часовня
             const kind = chapel ? 'tower' : (level === 1 && rnd(30 + k) < 0.4 ? 'hut' : 'house');
             const scale = count === 1 ? 1.2 : 1;
-            const w = chapel ? n(4) : Math.max(3, Math.round(n(5) * scale) + Math.floor(rnd(50 + k) * 3) - 1 - (kind === 'hut' ? 1 : 0));
-            const bodyH = chapel ? n(5) : Math.max(2, n(3) + (rnd(60 + k) < 0.4 ? 1 : 0) - (kind === 'hut' ? 1 : 0));
-            const roofH = chapel ? n(5) : Math.max(2, n(count >= 3 ? 2 : 3) - (kind === 'hut' ? 1 : 0));
+            const w = chapel ? this.pxMin(4) : Math.max(3, Math.round(this.pxMin(5) * scale) + Math.floor(rnd(50 + k) * 3) - 1 - (kind === 'hut' ? 1 : 0));
+            const bodyH = chapel ? this.pxMin(5) : Math.max(2, this.pxMin(3) + (rnd(60 + k) < 0.4 ? 1 : 0) - (kind === 'hut' ? 1 : 0));
+            const roofH = chapel ? this.pxMin(5) : Math.max(2, this.pxMin(count >= 3 ? 2 : 3) - (kind === 'hut' ? 1 : 0));
             for (let attempt = 0; attempt < 40; attempt++) {
                 const centerX = left + (0.14 + 0.72 * rnd(100 + k * 50 + attempt)) * T;
                 const baseY = top + (0.42 + 0.56 * rnd(300 + k * 50 + attempt)) * T;
@@ -1996,7 +2053,7 @@ class MapPainter {
             }
         }
         for (let attempt = 0; houses.length === 0 && attempt < 16; attempt++) {  // запасной вариант: хоть один дом в клетке
-            tryPlace(left + T / 2 + (rnd(70 + attempt) - 0.5) * n(6), top + T * 0.8 + (rnd(90 + attempt) - 0.5) * n(4), n(5), n(3), n(3), 'house');
+            tryPlace(left + T / 2 + (rnd(70 + attempt) - 0.5) * this.pxMin(6), top + T * 0.8 + (rnd(90 + attempt) - 0.5) * this.pxMin(4), this.pxMin(5), this.pxMin(3), this.pxMin(3), 'house');
         }
 
         // Утоптанная земля и улица-заготовка в сторону дороги (дороги между клетками рисует paintRoads).
@@ -2011,8 +2068,8 @@ class MapPainter {
                 break;
             }
         }
-        const blobs = [[cx, cy, n(7)]];
-        for (const house of houses) blobs.push([house.x, house.base - house.bodyH / 2, n(4)]);
+        const blobs = [[cx, cy, this.pxMin(7)]];
+        for (const house of houses) blobs.push([house.x, house.base - house.bodyH / 2, this.pxMin(4)]);
         return { level, houses, blobs, street };
     }
 
@@ -2200,7 +2257,9 @@ class MapPainter {
         }
     }
 
-    /* ---------- Руды ---------- */
+    /* ==============================================================
+       SECTION: ORE & ETHER (руды и эфир)
+       ============================================================== */
 
     // Каменный выступ с вкраплениями руды. kind: 'gold' (золото — яркое, с блёстками) или 'iron' (железо — тёмное, ржавое).
     oreSprite(kind, variant) {
@@ -2209,27 +2268,26 @@ class MapPainter {
         const cached = this.spriteCache.get(key);
         if (cached) return cached;
 
-        const n = value => Math.max(1, this.px(value));
         const gold = kind === 'gold';
         const stone = gold ? [packRgb(150, 146, 150), packRgb(114, 110, 116), packRgb(78, 74, 82)] : [packRgb(120, 132, 146), packRgb(86, 96, 108), packRgb(54, 62, 74)];
         const oreLight = gold ? packRgb(255, 243, 168) : packRgb(207, 218, 228);
         const ore = gold ? packRgb(247, 212, 74) : packRgb(176, 92, 54);
         const oreDark = gold ? packRgb(168, 122, 20) : packRgb(98, 48, 30);
 
-        const width = n(14), height = n(11);
+        const width = this.pxMin(14), height = this.pxMin(11);
         const buffer = new PixelBuffer(width, height);
         const mid = width >> 1, floor = height - 2;
 
         // два-три камня разного размера
-        const rocks = [[mid - n(3), floor - n(2), n(4), n(3)], [mid + n(2), floor - n(2) - (variant % 2), n(4), n(4)], [mid - 1, floor - n(4), n(3), n(3)]];
+        const rocks = [[mid - this.pxMin(3), floor - this.pxMin(2), this.pxMin(4), this.pxMin(3)], [mid + this.pxMin(2), floor - this.pxMin(2) - (variant % 2), this.pxMin(4), this.pxMin(4)], [mid - 1, floor - this.pxMin(4), this.pxMin(3), this.pxMin(3)]];
         for (const [cx, cy, rx, ry] of rocks) buffer.ellipse(cx, cy, rx, ry, stone[1], stone[0], stone[2]);
 
         // вкрапления руды: самородки на камнях (золото — крупные и яркие, железо — ржавые жилы с блеском стали)
         const spots = gold
-            ? [[mid - n(3), floor - n(3)], [mid + n(3), floor - n(3)], [mid, floor - n(5)], [mid + 1, floor - 1]]
-            : [[mid - n(3), floor - n(2)], [mid + n(2), floor - n(3)], [mid, floor - n(4)], [mid - 1, floor - 1], [mid + n(4), floor - 1]];
+            ? [[mid - this.pxMin(3), floor - this.pxMin(3)], [mid + this.pxMin(3), floor - this.pxMin(3)], [mid, floor - this.pxMin(5)], [mid + 1, floor - 1]]
+            : [[mid - this.pxMin(3), floor - this.pxMin(2)], [mid + this.pxMin(2), floor - this.pxMin(3)], [mid, floor - this.pxMin(4)], [mid - 1, floor - 1], [mid + this.pxMin(4), floor - 1]];
         spots.forEach(([sx, sy], k) => {
-            const size = gold ? (k === 2 ? n(3) : n(2)) : n(2);
+            const size = gold ? (k === 2 ? this.pxMin(3) : this.pxMin(2)) : this.pxMin(2);
             buffer.rect(sx, sy, size, size, ore);
             buffer.rect(sx + 1, sy + size, size, 1, oreDark);
             buffer.rect(sx + size, sy + 1, 1, size, oreDark);
@@ -2238,7 +2296,7 @@ class MapPainter {
         });
         if (this.options.spriteOutline) buffer.outline(this.colors.outline);
 
-        const sprite = { buffer, width, height, anchorX: mid, anchorY: floor + 1, sparkles: gold ? [[mid - n(3), floor - n(4)], [mid + n(3), floor - n(4)], [mid, floor - n(6)]] : [] };
+        const sprite = { buffer, width, height, anchorX: mid, anchorY: floor + 1, sparkles: gold ? [[mid - this.pxMin(3), floor - this.pxMin(4)], [mid + this.pxMin(3), floor - this.pxMin(4)], [mid, floor - this.pxMin(6)]] : [] };
         this.spriteCache.set(key, sprite);
         return sprite;
     }
@@ -2262,17 +2320,14 @@ class MapPainter {
         }
     }
 
-    /* ---------- Эфир: гигантские фиолетовые кристаллы и грибы ---------- */
-
     etherSprite(variant) {
         if (!this.spriteCache) this.spriteCache = new Map();
         const key = 'ether|' + variant;
         const cached = this.spriteCache.get(key);
         if (cached) return cached;
 
-        const n = value => Math.max(1, this.px(value));
         const light = packRgb(214, 170, 255), mid = packRgb(160, 90, 240), dark = packRgb(91, 42, 158), tip = packRgb(248, 232, 255);
-        const width = n(16), height = n(16);
+        const width = this.pxMin(16), height = this.pxMin(16);
         const buffer = new PixelBuffer(width, height);
         const floor = height - 2;
         const middle = width >> 1;
@@ -2289,9 +2344,9 @@ class MapPainter {
                 buffer.put(cx + 2, capY + 2, tip);
                 buffer.put(cx - capW + 2, capY + capH - 2, tip);
             };
-            mushroom(middle - n(3), n(5), n(4), n(3));
-            mushroom(middle + n(3), n(7), n(5), n(4));
-            mushroom(middle, n(3), n(3), n(2));
+            mushroom(middle - this.pxMin(3), this.pxMin(5), this.pxMin(4), this.pxMin(3));
+            mushroom(middle + this.pxMin(3), this.pxMin(7), this.pxMin(5), this.pxMin(4));
+            mushroom(middle, this.pxMin(3), this.pxMin(3), this.pxMin(2));
         } else {
             // кристаллы: три остроконечные призмы разной высоты (левая грань светлая, правая тёмная)
             const crystal = (cx, crystalWidth, crystalHeight) => {
@@ -2304,10 +2359,10 @@ class MapPainter {
                 }
                 buffer.put(cx, floor - crystalHeight + 1, tip);
             };
-            crystal(middle - n(3), n(3), n(8));
-            crystal(middle + n(2), n(4), n(12));
-            crystal(middle + n(5), n(2), n(6));
-            buffer.ellipse(middle, floor, n(6), 1, dark, mid, dark);
+            crystal(middle - this.pxMin(3), this.pxMin(3), this.pxMin(8));
+            crystal(middle + this.pxMin(2), this.pxMin(4), this.pxMin(12));
+            crystal(middle + this.pxMin(5), this.pxMin(2), this.pxMin(6));
+            buffer.ellipse(middle, floor, this.pxMin(6), 1, dark, mid, dark);
         }
         if (this.options.spriteOutline) buffer.outline(packRgb(34, 14, 66));
 
@@ -2330,7 +2385,9 @@ class MapPainter {
         this.drawLight(cx, base - this.px(8), c.riftCore, c.riftGlow, this.px(3));
     }
 
-    /* ---------- 5. Границы регионов ---------- */
+    /* ==============================================================
+       SECTION: REGION PIXELS
+       ============================================================== */
 
     // Чей пиксель: номер региона для каждого пикселя карты или -1 (вода, река, ничья земля).
     // Пиксель наследует регион своей клетки, но береговая линия скруглена и русла рек уже клетки, поэтому:
@@ -2511,7 +2568,9 @@ class MapPainter {
         }
     }
 
-    /* ---------- Контуры и сетка ---------- */
+    /* ==============================================================
+       SECTION: OUTLINES & GRID
+       ============================================================== */
 
     /* Контур области пикселей: замкнутые ломаные в пикселях карты (координаты — углы пикселей). inside(x, y) говорит,
        входит ли пиксель в область; ищем её только в рамке x0..x1, y0..y1. Обход по часовой стрелке, внутри — справа.
@@ -2752,7 +2811,9 @@ class MapPainter {
         return canvas;
     }
 
-    /* ---------- 6. Декорации ---------- */
+    /* ==============================================================
+       SECTION: DECORATIONS
+       ============================================================== */
 
     /* Все декорации собираем в один список и рисуем по возрастанию «основания» (нижней точки):
        то, что стоит ниже на карте, перекрывает то, что выше, — как в перспективе. Деревья могут свободно
