@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Редактор объектов</title>
+<style>
+    :root { --bg: #f1eee6; --fg: #232a2e; --muted: #66706f; --panel: #e2ddd0; --accent: #a8641c; --accent-fg: #fff; --err: #b3261e; }
+    @media (prefers-color-scheme: dark) {
+        :root { --bg: #141b21; --fg: #dde4dc; --muted: #8b9997; --panel: #202b33; --accent: #e0b354; --accent-fg: #1a1408; --err: #ff8a80; }
+    }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 "Trebuchet MS", Verdana, sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    h1 { font: 700 22px/1.2 Georgia, "Times New Roman", serif; margin: 0 0 12px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+    select, input, textarea, button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid transparent; border-radius: 4px; padding: 6px 10px; }
+    input[type=color] { padding: 0; width: 40px; height: 32px; }
+    label { color: var(--muted); display: flex; gap: 6px; align-items: center; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+    @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+    textarea { width: 100%; height: 480px; box-sizing: border-box; font: 13px/1.4 Consolas, Menlo, monospace; resize: vertical; white-space: pre; }
+    #stage { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; padding: 24px; border-radius: 6px; min-height: 200px; }
+    #stage canvas { image-rendering: pixelated; }
+    .ground-grass { background: #6e9350; }
+    .ground-snow { background: #dfe8ec; }
+    .ground-sand { background: #d0bb82; }
+    .ground-water { background: #3f7896; }
+    #error { color: var(--err); min-height: 1.5em; margin: 6px 0 0; font-family: Consolas, Menlo, monospace; font-size: 13px; white-space: pre-wrap; }
+    .hint { color: var(--muted); margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<main>
+    <h1>Редактор объектов</h1>
+    <div class="controls">
+        <label>Пример <select id="example"></select></label>
+        <label>Сезон
+            <select id="season">
+                <option value="">—</option>
+                <option value="spring">весна</option>
+                <option value="summer">лето</option>
+                <option value="autumn">осень</option>
+                <option value="winter">зима</option>
+            </select>
+        </label>
+        <label>Цвет игрока <input type="color" id="team" value="#c0392b"></label>
+        <label>Кадр <select id="frame"><option>0</option><option>1</option><option>2</option><option>3</option></select></label>
+        <label>Флаги <input id="flags" placeholder="marching, besieged" size="18"></label>
+        <label>Масштаб <select id="scale"><option>4</option><option selected>6</option><option>8</option></select></label>
+        <label><input type="checkbox" id="flip">отразить</label>
+        <label>Фон
+            <select id="ground">
+                <option value="grass">трава</option>
+                <option value="snow">снег</option>
+                <option value="sand">песок</option>
+                <option value="water">вода</option>
+            </select>
+        </label>
+    </div>
+    <div class="layout">
+        <div>
+            <textarea id="json" spellcheck="false" aria-label="Конфиг объекта в формате JSON"></textarea>
+            <div id="error" role="status"></div>
+            <p class="hint">Конфиг — это JSON. Формат описан в комментарии в начале sprite-renderer.js. Изменения применяются сразу.</p>
+        </div>
+        <div>
+            <div id="stage" class="ground-grass"></div>
+            <p class="hint">Клетка карты — 12×12 пикселей; под рисунком показан размер клетки для сравнения.</p>
+        </div>
+    </div>
+</main>
+
+<script src="map-painter.js"></script>
+<script src="sprite-renderer.js"></script>
+<script src="sprite-examples.js"></script>
+<script>
+    const sprites = new SpriteRenderer();
+    const $ = id => document.getElementById(id);
+    const exampleSelect = $('example');
+
+    for (const name of Object.keys(SPRITE_EXAMPLES)) exampleSelect.add(new Option(name, name));
+
+    function loadExample() {
+        $('json').value = JSON.stringify(SPRITE_EXAMPLES[exampleSelect.value], null, 2);
+        render();
+    }
+
+    function render() {
+        const stage = $('stage');
+        const error = $('error');
+        stage.className = 'ground-' + $('ground').value;
+        stage.replaceChildren();
+        error.textContent = '';
+
+        let config;
+        try {
+            config = JSON.parse($('json').value);
+        } catch (e) {
+            error.textContent = 'Ошибка JSON: ' + e.message;
+            return;
+        }
+
+        const options = {
+            season: $('season').value || undefined,
+            colors: { team: $('team').value },
+            frame: Number($('frame').value),
+            flags: $('flags').value.split(',').map(f => f.trim()).filter(Boolean),
+            scale: Number($('scale').value),
+            flipX: $('flip').checked
+        };
+
+        try {
+            const sprite = sprites.render(config, options);
+            // Вся «сцена» — спрайт в разных кадрах, чтобы сразу видеть анимацию.
+            const frames = [0, 1].map(frame => sprites.render(config, { ...options, frame }));
+            for (const item of options.frame === 0 || options.frame === 1 ? frames : [sprite]) {
+                stage.appendChild(item.canvas);
+            }
+
+            // Клетка 12×12 для сравнения масштаба.
+            const tile = document.createElement('div');
+            tile.style.cssText = `width:${12 * options.scale}px;height:${12 * options.scale}px;border:1px dashed rgba(0,0,0,.45);box-sizing:border-box`;
+            stage.appendChild(tile);
+        } catch (e) {
+            error.textContent = e.message;
+        }
+    }
+
+    exampleSelect.addEventListener('change', loadExample);
+    for (const id of ['season', 'team', 'frame', 'flags', 'scale', 'flip', 'ground']) $(id).addEventListener('input', render);
+    $('json').addEventListener('input', render);
+    loadExample();
+</script>
+</body>
+</html>
