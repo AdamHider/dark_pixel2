@@ -390,6 +390,12 @@ class MapPainter {
         return Math.round(n * this.tileSize / 12);
     }
 
+    // Индекс клетки по индексу пикселя карты (обе версии записи дают одинаковый результат).
+    tileOfPixel(k) {
+        const T = this.tileSize, W = this.width;
+        return Math.floor(k / W / T) * this.map.size + Math.floor((k % W) / T);
+    }
+
     forEachTile(callback) {
         const size = this.map.size;
         for (let y = 0; y < size; y++) {
@@ -891,7 +897,7 @@ class MapPainter {
             if (k < W * W - W) around[n++] = k + W;
             return n;
         };
-        const tileOf = k => Math.floor(k / W / T) * size + Math.floor((k % W) / T);
+        const tileOf = k => this.tileOfPixel(k);
 
         // 1) семена: каждый пиксель суши прямо у воды. Тип берега задан для клеток, а сглаженная береговая линия заходит
         // в соседние клетки (в том числе в воду, у которой типа нет), поэтому тип берём у самой клетки пикселя, а если у неё
@@ -1372,7 +1378,7 @@ class MapPainter {
         const W = this.width;
         const size = this.map.size;
         const pixels = this.pixels;
-        const tileOf = k => Math.floor(Math.floor(k / W) / T) * size + Math.floor((k % W) / T);
+        const tileOf = k => this.tileOfPixel(k);
         const iceRiver = tile => this.seasonalTemperature(tile) < RIVER_ICE_TEMPERATURE;
         const bankColors = new Map();                              // тёмный цвет берега считаем один раз на каждый цвет земли
 
@@ -1902,7 +1908,7 @@ class MapPainter {
         const size = map.size;
         const T = this.tileSize;
         const pixels = this.pixels;
-        const tileOf = k => Math.floor(Math.floor(k / W) / T) * size + Math.floor((k % W) / T);
+        const tileOf = k => this.tileOfPixel(k);
 
         for (const k of geometry.halo) pixels[k] = mixPacked(pixels[k], dirt, 0.28);
         for (let n = 0; n < geometry.core.length; n++) {

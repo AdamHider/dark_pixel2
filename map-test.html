@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Тестер карт</title>
+<style>
+    :root { --bg: #f1eee6; --fg: #232a2e; --muted: #66706f; --panel: #e2ddd0; --accent: #a8641c; --accent-fg: #fff;
+            --ok: #2e7d32; --bad: #b3261e; --warn: #8a6d1c; }
+    @media (prefers-color-scheme: dark) {
+        :root { --bg: #141b21; --fg: #dde4dc; --muted: #8b9997; --panel: #202b33; --accent: #e0b354; --accent-fg: #1a1408;
+                --ok: #8bd48f; --bad: #ff8a80; --warn: #e0c46a; }
+    }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 "Trebuchet MS", Verdana, sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    h1 { font: 700 22px/1.2 Georgia, "Times New Roman", serif; margin: 0 0 12px; }
+    h2 { font: 700 17px/1.2 Georgia, "Times New Roman", serif; margin: 24px 0 8px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 10px; }
+    button, input[type=number], input[type=text], textarea { font: inherit; color: var(--fg); background: var(--panel);
+        border: 1px solid transparent; border-radius: 4px; padding: 6px 10px; }
+    button { cursor: pointer; }
+    button.primary { background: var(--accent); color: var(--accent-fg); }
+    button:disabled { opacity: .5; cursor: default; }
+    input[type=number] { width: 80px; }
+    input[type=text] { width: 110px; }
+    label { color: var(--muted); display: flex; gap: 6px; align-items: center; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--panel); vertical-align: top; }
+    th { color: var(--muted); font-weight: 400; }
+    td.hash { font-family: Consolas, Menlo, monospace; font-size: 13px; }
+    td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .ok { color: var(--ok); }
+    .bad { color: var(--bad); }
+    .warn { color: var(--warn); }
+    .diff { color: var(--muted); font-size: 13px; }
+    #summary { min-height: 1.6em; margin: 12px 0; }
+    #baseline { width: 100%; height: 180px; box-sizing: border-box; font: 13px/1.4 Consolas, Menlo, monospace; resize: vertical; white-space: pre; }
+    .hint { color: var(--muted); }
+    .group-sep td { border-bottom: none; padding-top: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+    <h1>Тестер карт</h1>
+    <p class="hint">
+        Прогоняет генерацию и отрисовку на заданных настройках и считает хэш результата. Хэш зависит от
+        каждой клетки и каждого пикселя, поэтому любое изменение результата его меняет. Задайте эталон
+        (кнопкой «Принять текущий» или вставьте свои хэши в поле ниже) — и после каждой правки будет видно,
+        что именно поехало.
+    </p>
+
+    <div class="controls">
+        <label>Размер карты <input id="size" type="number" value="120" min="16" max="400" step="1"></label>
+        <label>Клетка, px <input id="tile" type="number" value="12" min="6" max="32" step="1"></label>
+        <label>Seed'ы <input id="seeds" type="text" value="42" size="14" title="Несколько seed'ов — через запятую"></label>
+        <label>Повторов <input id="repeats" type="number" value="1" min="1" max="20" step="1"
+            title="Прогнать каждый случай несколько раз и взять лучшее время"></label>
+        <button id="run" class="primary">Прогнать</button>
+        <button id="stop" hidden>Стоп</button>
+    </div>
+
+    <div class="controls" role="group" aria-label="Виды">
+        <span class="hint">Виды:</span>
+        <label><input type="checkbox" class="view" value="terrain" checked>рельеф</label>
+        <label><input type="checkbox" class="view" value="temperature" checked>температура</label>
+        <label><input type="checkbox" class="view" value="regions" checked>регионы</label>
+    </div>
+    <div class="controls" role="group" aria-label="Сезоны">
+        <span class="hint">Сезоны:</span>
+        <label><input type="checkbox" class="season" value="spring">весна</label>
+        <label><input type="checkbox" class="season" value="summer" checked>лето</label>
+        <label><input type="checkbox" class="season" value="autumn">осень</label>
+        <label><input type="checkbox" class="season" value="winter" checked>зима</label>
+    </div>
+    <div class="controls" role="group" aria-label="Стили и слои">
+        <label><input type="checkbox" class="mood" value="light" checked>светлый стиль</label>
+        <label><input type="checkbox" class="mood" value="dark" checked>тёмный стиль</label>
+        <label><input type="checkbox" id="noBorders">отдельно без границ регионов</label>
+        <label><input type="checkbox" id="sprites" checked>объекты (спрайты)</label>
+    </div>
+
+    <div class="controls">
+        <button id="adopt">Принять текущий как эталон</button>
+        <button id="download">Скачать эталон</button>
+        <label>Загрузить эталон <input id="upload" type="file" accept=".json,application/json"></label>
+        <button id="clear">Очистить эталон</button>
+    </div>
+
+    <p id="summary"></p>
+    <table id="results" hidden>
+        <thead><tr><th>Случай</th><th>Хэш</th><th class="num">Время, мс</th><th class="num">Δ времени</th><th>Эталон</th></tr></thead>
+        <tbody></tbody>
+    </table>
+
+    <h2>Эталон</h2>
+    <p class="hint">
+        Формат — JSON (как его сохраняет кнопка «Принять текущий») или строки «имя случая = хэш».
+        Хранится в localStorage, поэтому переживает перезагрузку страницы.
+    </p>
+    <textarea id="baseline" spellcheck="false" aria-label="Эталонные хэши" placeholder="paint|terrain|summer|dark|borders = 1a2b3c4d5e6f7788"></textarea>
+</main>
+
+<script src="map-generator.js"></script>
+<script src="seasons.js"></script>
+<script src="map-painter.js"></script>
+<script src="sprite-renderer.js"></script>
+<script src="sprite-examples.js"></script>
+<script>
+/* ============================================================
+   Тестер: ядро.
+   Считает хэши генерации, отрисовки и спрайтов и сравнивает их с эталоном.
+   Ничего не рисует на экран — работает только с данными (пикселями), поэтому
+   результат не зависит от размера окна и от того, какой холст виден.
+   ============================================================ */
+const MAP_TEST = (() => {
+
+    /* ---------- Хэш (FNV-1a, два независимых потока — 64 бита) ---------- */
+
+    const FNV_OFFSET = 0x811c9dc5;
+    const FNV_PRIME = 0x01000193;
+    const SECOND_SEED = 0x9e3779b9;
+
+    const scratch = new Float64Array(1);
+    const scratchBytes = new Uint8Array(scratch.buffer);
+
+    class Hasher {
+        constructor() {
+            this.h1 = FNV_OFFSET;
+            this.h2 = SECOND_SEED;
+        }
+
+        byte(value) {
+            this.h1 = Math.imul(this.h1 ^ (value & 255), FNV_PRIME);
+            this.h2 = Math.imul(this.h2 ^ ((value + 0x5d) & 255), 0x85ebca6b);
+            return this;
+        }
+
+        uint32(value) {
+            this.byte(value);
+            this.byte(value >>> 8);
+            this.byte(value >>> 16);
+            this.byte(value >>> 24);
+            return this;
+        }
+
+        int(value) {
+            return this.uint32(value | 0);
+        }
+
+        number(value) {
+            scratch[0] = value;
+            for (let i = 0; i < 8; i++) this.byte(scratchBytes[i]);
+            return this;
+        }
+
+        string(text) {
+            this.uint32(text.length);
+            for (let i = 0; i < text.length; i++) this.uint32(text.charCodeAt(i));
+            return this;
+        }
+
+        // Любой типизированный массив: хэшируем его байты как есть.
+        typed(array) {
+            if (!array) return this.string('null');
+            const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+            this.uint32(bytes.length);
+            for (let i = 0; i < bytes.length; i++) {
+                this.h1 = Math.imul(this.h1 ^ bytes[i], FNV_PRIME);
+                this.h2 = Math.imul(this.h2 ^ ((bytes[i] + 0x5d) & 255), 0x85ebca6b);
+            }
+            return this;
+        }
+
+        numbers(array) {
+            this.uint32(array.length);
+            for (let i = 0; i < array.length; i++) this.number(array[i]);
+            return this;
+        }
+
+        hex() {
+            const part = value => (value >>> 0).toString(16).padStart(8, '0');
+            return part(this.h1) + part(this.h2);
+        }
+    }
+
+    const hashTyped = array => new Hasher().typed(array).hex();
+    const hashNumbers = array => new Hasher().numbers(array).hex();
+    const hashString = text => new Hasher().string(text).hex();
+
+    // Хэш всего случая по хэшам его частей: имя части тоже участвует, поэтому
+    // «terrain совпал с biome» — это не «всё совпало».
+    function combineParts(parts) {
+        const hasher = new Hasher();
+        for (const name of Object.keys(parts).sort()) hasher.string(name).string(parts[name]);
+        return hasher.hex();
+    }
+
+    /* ---------- Части: генерация ---------- */
+
+    // Всё, что генератор оставляет в клетках. По этим частям видно, какой шаг конвейера изменился.
+    function generationParts(map) {
+        const parts = {};
+        for (const name of ['terrain', 'biome', 'resource', 'river', 'roadLevel', 'roadLinks', 'shore', 'crossing',
+                            'waterDepth', 'regionId', 'settlementLevel', 'population', 'settlementGroup',
+                            'mountainHeight', 'massif', 'elevation', 'moisture', 'ridge', 'temperature',
+                            'riverTo', 'riverFlow']) {
+            parts[name] = hashTyped(map[name]);
+        }
+        parts.landTiles = hashNumbers(map.landTiles);
+
+        const settlements = new Hasher();
+        settlements.int(map.settlements.length);
+        for (const s of map.settlements) {
+            settlements.int(s.id).int(s.groupId).int(s.regionId).int(s.tile)
+                .int(s.population).int(s.level).byte(s.center ? 1 : 0);
+        }
+        settlements.int(map.settlementGroups.length);
+        for (const group of map.settlementGroups) {
+            settlements.int(group.id).int(group.regionId).int(group.tile).int(group.population);
+            settlements.numbers(group.tiles);
+        }
+        parts.settlements = settlements.hex();
+
+        parts.stats = hashNumbers([map.seaLevel, map.mountainLevel, map.landShare, map.regionCount]);
+        return parts;
+    }
+
+    /* ---------- Части: отрисовка ---------- */
+
+    // Пиксели карты после paint() — это и есть холст 1:1, только без чтения через getImageData.
+    function paintParts(painter) {
+        return {
+            pixels: hashTyped(painter.pixels),
+            waterMask: hashTyped(painter.waterMask)
+        };
+    }
+
+    function spriteParts(sprite) {
+        const canvas = sprite.canvas;
+        const ctx = canvas.getContext('2d');
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        return {
+            canvas: hashTyped(data),
+            layout: hashNumbers([sprite.width, sprite.height, sprite.anchorX, sprite.anchorY, sprite.scale])
+        };
+    }
+
+    /* ---------- Список случаев ---------- */
+
+    // settings: { size, tileSize, seeds, views, seasons, moods, borders, noBorders, sprites, spriteSeasons }
+    function planCases(settings) {
+        const cases = [];
+
+        for (const seed of settings.seeds) {
+            cases.push({
+                name: `gen|${settings.size}|${seed}`,
+                group: 'Генерация',
+                run: () => generationParts(new MapGenerator({ size: settings.size }).generate(seed))
+            });
+        }
+
+        const seed = settings.seeds[0];
+        const maps = new Map();
+        const mapFor = () => {
+            if (!maps.has(seed)) maps.set(seed, new MapGenerator({ size: settings.size }).generate(seed));
+            return maps.get(seed);
+        };
+
+        const borderModes = [true, false].filter(mode => (mode ? settings.borders : settings.noBorders));
+        for (const view of settings.views) {
+            for (const seasonName of settings.seasons) {
+                for (const mood of settings.moods) {
+                    for (const showBorders of borderModes) {
+                        cases.push({
+                            name: `paint|${view}|${seasonName}|${mood}|${showBorders ? 'borders' : 'noborders'}`,
+                            group: 'Отрисовка',
+                            run: () => {
+                                const map = mapFor();   // генерация в измеряемое время не входит
+                                const painter = new MapPainter(map, { tileSize: settings.tileSize });
+                                painter.paint({ view, seasonName, showBorders, mood });
+                                return paintParts(painter);
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
+        if (settings.sprites) {
+            for (const name of Object.keys(SPRITE_EXAMPLES)) {
+                for (const seasonName of settings.spriteSeasons) {
+                    cases.push({
+                        name: `sprite|${name}|${seasonName}`,
+                        group: 'Объекты',
+                        run: () => spriteParts(new SpriteRenderer().render(SPRITE_EXAMPLES[name], { season: seasonName }))
+                    });
+                }
+            }
+        }
+
+        return cases;
+    }
+
+    /* ---------- Прогон ---------- */
+
+    const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const yieldToUI = () => new Promise(resolve => setTimeout(resolve, 0));
+
+    async function runCases(settings, hooks = {}) {
+        const cases = planCases(settings);
+        const results = [];
+        for (const item of cases) {
+            if (hooks.shouldStop && hooks.shouldStop()) break;
+            let parts = null;
+            let best = Infinity;
+            for (let repeat = 0; repeat < settings.repeats; repeat++) {
+                const started = now();
+                parts = item.run();
+                best = Math.min(best, now() - started);
+                if (settings.repeats > 1) await yieldToUI();
+            }
+            const result = {
+                name: item.name,
+                group: item.group,
+                hash: combineParts(parts),
+                parts,
+                ms: Math.round(best * 10) / 10
+            };
+            results.push(result);
+            if (hooks.onCase) hooks.onCase(result, results.length, cases.length);
+            await yieldToUI();
+        }
+        return results;
+    }
+
+    /* ---------- Сравнение с эталоном ---------- */
+
+    // Возвращает по каждому случаю: совпало / изменилось / нет эталона, и какие части разошлись.
+    function compare(baseline, results) {
+        return results.map(result => {
+            const reference = baseline && baseline.cases ? baseline.cases[result.name] : null;
+            if (!reference) return { result, reference: null, status: 'new', diff: [] };
+            if (reference.hash === result.hash) return { result, reference, status: 'same', diff: [] };
+
+            const diff = [];
+            for (const name of Object.keys(result.parts)) {
+                const was = reference.parts ? reference.parts[name] : null;
+                if (was !== undefined && was !== null && was !== result.parts[name]) diff.push(name);
+            }
+            return { result, reference, status: 'changed', diff };
+        });
+    }
+
+    /* ---------- Эталон: разбор текста и сборка ---------- */
+
+    // Принимает JSON или строки «имя случая = хэш» — чтобы целевой хэш можно было вписать руками.
+    function parseBaseline(text) {
+        const trimmed = (text || '').trim();
+        if (!trimmed) return { version: 1, cases: {} };
+
+        if (trimmed[0] === '{') {
+            const parsed = JSON.parse(trimmed);
+            if (!parsed || typeof parsed !== 'object' || !parsed.cases) throw new Error('В JSON нет поля "cases"');
+            return { version: parsed.version || 1, cases: parsed.cases };
+        }
+
+        const cases = {};
+        for (const line of trimmed.split('\n')) {
+            const clean = line.trim();
+            if (!clean || clean.startsWith('#')) continue;
+            const [name, hash] = clean.split('=').map(part => part.trim());
+            if (!name || !hash) throw new Error(`Не разобрал строку: "${clean}"`);
+            cases[name] = { hash };
+        }
+        return { version: 1, cases };
+    }
+
+    function buildBaseline(results, previous) {
+        const cases = {};
+        for (const result of results) cases[result.name] = { hash: result.hash, ms: result.ms, parts: result.parts };
+        // Случаи, которых не было в прогоне, сохраняем: их эталон ещё пригодится.
+        for (const [name, value] of Object.entries(previous && previous.cases ? previous.cases : {})) {
+            if (!cases[name]) cases[name] = value;
+        }
+        return { version: 1, cases };
+    }
+
+    return { Hasher, hashTyped, hashNumbers, hashString, combineParts, generationParts, paintParts, spriteParts,
+             planCases, runCases, compare, parseBaseline, buildBaseline };
+})();
+
+/* ============================================================
+   Тестер: интерфейс.
+   ============================================================ */
+if (typeof document !== 'undefined' && typeof document.getElementById === 'function') (() => {
+    const STORAGE_KEY = 'map-test-baseline-v1';
+    const $ = id => document.getElementById(id);
+    const table = $('results');
+    const tbody = table.querySelector('tbody');
+    const summary = $('summary');
+
+    let running = false;
+    let stopRequested = false;
+
+    /* ---------- Настройки из формы ---------- */
+
+    const checked = selector => Array.from(document.querySelectorAll(selector)).filter(box => box.checked).map(box => box.value);
+
+    function readSettings() {
+        const seeds = $('seeds').value.split(/[\s,;]+/).map(Number).filter(Number.isFinite);
+        const seasons = checked('.season');
+        return {
+            size: Math.max(16, Math.min(400, Number($('size').value) || 120)),
+            tileSize: Math.max(6, Math.min(32, Number($('tile').value) || 12)),
+            seeds: seeds.length ? seeds : [1],
+            views: checked('.view'),
+            seasons,
+            moods: checked('.mood'),
+            borders: true,
+            noBorders: $('noBorders').checked,
+            sprites: $('sprites').checked,
+            spriteSeasons: seasons.length ? seasons : ['summer'],
+            repeats: Math.max(1, Math.min(20, Number($('repeats').value) || 1))
+        };
+    }
+
+    /* ---------- Эталон ---------- */
+
+    function readBaseline() {
+        const text = $('baseline').value;
+        if (!text.trim()) return { version: 1, cases: {} };
+        try {
+            return MAP_TEST.parseBaseline(text);
+        } catch (error) {
+            summary.textContent = 'Эталон не разобран: ' + error.message;
+            summary.className = 'bad';
+            return { version: 1, cases: {} };
+        }
+    }
+
+    function writeBaseline(baseline) {
+        $('baseline').value = JSON.stringify(baseline, null, 1);
+        try {
+            localStorage.setItem(STORAGE_KEY, $('baseline').value);
+        } catch (error) {
+            /* приватный режим или переполнение — эталон просто не переживёт перезагрузку */
+        }
+    }
+
+    try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) $('baseline').value = saved;
+    } catch (error) {
+        /* нет доступа к localStorage — начинаем с пустого эталона */
+    }
+
+    /* ---------- Таблица результатов ---------- */
+
+    const formatMs = value => value >= 1000 ? (value / 1000).toFixed(2) + ' с' : Math.round(value) + ' мс';
+
+    function timeDelta(result, reference) {
+        if (!reference || !reference.ms) return '';
+        const change = (result.ms - reference.ms) / reference.ms;
+        if (Math.abs(change) < 0.02) return '<span class="diff">±0%</span>';
+        const sign = change > 0 ? '+' : '−';
+        const cls = change > 0 ? 'bad' : 'ok';
+        return `<span class="${cls}">${sign}${Math.round(Math.abs(change) * 100)}%</span>`;
+    }
+
+    const STATUS = {
+        same: ['совпало', 'ok'],
+        changed: ['ИЗМЕНИЛОСЬ', 'bad'],
+        new: ['нет эталона', 'warn']
+    };
+
+    function renderRow(comparison, isFirstOfGroup, groupName) {
+        const { result, reference, status, diff } = comparison;
+        const [label, cls] = STATUS[status];
+        const row = document.createElement('tr');
+
+        if (isFirstOfGroup) {
+            const separator = document.createElement('tr');
+            separator.className = 'group-sep';
+            separator.innerHTML = `<td colspan="5">${groupName}</td>`;
+            tbody.appendChild(separator);
+        }
+
+        row.innerHTML =
+            `<td class="hash">${result.name}</td>` +
+            `<td class="hash">${result.hash}</td>` +
+            `<td class="num">${formatMs(result.ms)}</td>` +
+            `<td class="num">${timeDelta(result, reference)}</td>` +
+            `<td class="${cls}">${label}${diff.length ? `<div class="diff">разошлось: ${diff.join(', ')}</div>` : ''}</td>`;
+        tbody.appendChild(row);
+    }
+
+    function renderComparisons(comparisons, counted) {
+        tbody.replaceChildren();
+        table.hidden = false;
+
+        let previousGroup = null;
+        for (const comparison of comparisons) {
+            const group = comparison.result.group;
+            renderRow(comparison, group !== previousGroup, group);
+            previousGroup = group;
+        }
+
+        const changed = comparisons.filter(c => c.status === 'changed').length;
+        const missing = comparisons.filter(c => c.status === 'new').length;
+        const totalMs = comparisons.reduce((sum, c) => sum + c.result.ms, 0);
+
+        summary.className = changed ? 'bad' : missing ? 'warn' : 'ok';
+        summary.textContent = changed
+            ? `Результат изменился в ${changed} из ${counted} случаев — правка повлияла на карту.`
+            : missing
+                ? `Все ${counted} случаев прогнаны, но ${missing} из них нет в эталоне. Нажмите «Принять текущий как эталон».`
+                : `Все ${counted} случаев совпали с эталоном. Суммарное время: ${formatMs(totalMs)}.`;
+    }
+
+    /* ---------- Прогон ---------- */
+
+    async function run() {
+        if (running) return;
+        running = true;
+        stopRequested = false;
+        $('run').disabled = true;
+        $('stop').hidden = false;
+        summary.className = '';
+        summary.textContent = 'Прогон…';
+        tbody.replaceChildren();
+        table.hidden = false;
+
+        const settings = readSettings();
+        const baseline = readBaseline();
+        const comparisons = [];
+
+        try {
+            const results = await MAP_TEST.runCases(settings, {
+                shouldStop: () => stopRequested,
+                onCase: (result, done, total) => {
+                    const comparison = MAP_TEST.compare(baseline, [result])[0];
+                    comparisons.push(comparison);
+                    const group = result.group;
+                    const isFirst = comparisons.filter(c => c.result.group === group).length === 1;
+                    renderRow(comparison, isFirst, group);
+                    summary.textContent = `Прогон… ${done} из ${total}`;
+                }
+            });
+            if (!results.length) {
+                summary.className = 'warn';
+                summary.textContent = 'Нечего прогонять: выберите хотя бы один вид, сезон или стиль.';
+                return;
+            }
+            renderComparisons(comparisons, results.length);
+            lastResults = results;
+        } catch (error) {
+            summary.className = 'bad';
+            summary.textContent = 'Ошибка: ' + error.message;
+            console.error(error);
+        } finally {
+            running = false;
+            $('run').disabled = false;
+            $('stop').hidden = true;
+        }
+    }
+
+    let lastResults = null;
+
+    $('run').addEventListener('click', run);
+    $('stop').addEventListener('click', () => { stopRequested = true; });
+
+    $('adopt').addEventListener('click', () => {
+        const results = lastResults;
+        if (!results || !results.length) {
+            summary.className = 'warn';
+            summary.textContent = 'Сначала прогоните тесты — эталон берётся из последнего прогона.';
+            return;
+        }
+        writeBaseline(MAP_TEST.buildBaseline(results, readBaseline()));
+        renderComparisons(MAP_TEST.compare(readBaseline(), results), results.length);
+        summary.className = 'ok';
+        summary.textContent = `Эталон обновлён: ${results.length} случаев.`;
+    });
+
+    $('download').addEventListener('click', () => {
+        const blob = new Blob([$('baseline').value || JSON.stringify({ version: 1, cases: {} })], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'map-test-baseline.json';
+        link.click();
+        URL.revokeObjectURL(link.href);
+    });
+
+    $('upload').addEventListener('change', event => {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            $('baseline').value = reader.result;
+            try {
+                localStorage.setItem(STORAGE_KEY, $('baseline').value);
+            } catch (error) { /* не критично */ }
+            summary.className = '';
+            summary.textContent = 'Эталон загружен: ' + file.name;
+        };
+        reader.readAsText(file);
+        event.target.value = '';
+    });
+
+    $('clear').addEventListener('click', () => {
+        $('baseline').value = '';
+        try {
+            localStorage.removeItem(STORAGE_KEY);
+        } catch (error) { /* не критично */ }
+        tbody.replaceChildren();
+        table.hidden = true;
+        summary.className = '';
+        summary.textContent = 'Эталон очищен.';
+    });
+
+    $('baseline').addEventListener('input', () => {
+        try {
+            localStorage.setItem(STORAGE_KEY, $('baseline').value);
+        } catch (error) { /* не критично */ }
+    });
+
+    if ($('baseline').value) summary.textContent = 'Эталон загружен из localStorage. Нажмите «Прогнать».';
+})();
+</script>
+</body>
+</html>

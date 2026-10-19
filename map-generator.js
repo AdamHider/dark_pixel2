@@ -471,15 +471,7 @@
            for (let start = 0; start < this.terrain.length; start++) {
                if (visited[start] || this.terrain[start] !== Terrain.MOUNTAIN) continue;
    
-               const queue = [start];
-               visited[start] = 1;
-               for (let head = 0; head < queue.length; head++) {
-                   for (const neighbor of this.neighbors(queue[head])) {
-                       if (visited[neighbor] || this.terrain[neighbor] !== Terrain.MOUNTAIN) continue;
-                       visited[neighbor] = 1;
-                       queue.push(neighbor);
-                   }
-               }
+               const queue = this.collectComponent(start, i => this.terrain[i] === Terrain.MOUNTAIN, visited);
                if (queue.length >= this.options.minMountainSize) continue;
                for (const i of queue) {
                    this.terrain[i] = Terrain.PLAIN;
@@ -504,18 +496,24 @@
            }
        }
    
-       // Все клетки суши, связанные с start (соседи по сторонам).
-       collectLandComponent(start, visited) {
+       // Все клетки, связанные с start (соседи по сторонам), для которых accept(i) истинно.
+       // Обход в ширину; порядок добавления в очередь сохраняется, поэтому результат детерминирован.
+       collectComponent(start, accept, visited = new Uint8Array(this.terrain.length)) {
            const queue = [start];
            visited[start] = 1;
            for (let head = 0; head < queue.length; head++) {
                for (const neighbor of this.neighbors(queue[head])) {
-                   if (visited[neighbor] || !this.isLand(neighbor)) continue;
+                   if (visited[neighbor] || !accept(neighbor)) continue;
                    visited[neighbor] = 1;
                    queue.push(neighbor);
                }
            }
            return queue;
+       }
+
+       // Все клетки суши, связанные с start (соседи по сторонам).
+       collectLandComponent(start, visited) {
+           return this.collectComponent(start, i => this.isLand(i), visited);
        }
    
        collectLandTiles() {
@@ -1009,18 +1007,19 @@
    
            for (let radius = spacing; radius >= 0 && seeds.length < count; radius--) {
                blocked.fill(0);
-               for (const seed of seeds) this.markBlocked(blocked, seed, radius);
+               for (const seed of seeds) this.markSquare(blocked, seed, radius);
                for (const i of order) {
                    if (seeds.length >= count) break;
                    if (blocked[i] || seeds.includes(i)) continue;
                    seeds.push(i);
-                   this.markBlocked(blocked, i, radius);
+                   this.markSquare(blocked, i, radius);
                }
            }
            return seeds;
        }
    
-       markBlocked(blocked, i, radius) {
+       // Помечает квадрат радиуса radius вокруг клетки i.
+       markSquare(blocked, i, radius) {
            const x = i % this.size;
            const y = Math.floor(i / this.size);
            for (let dy = -radius; dy <= radius; dy++) {
@@ -1752,7 +1751,7 @@
    
        getRegionInfo(regionId) {
            if (regionId < 0) return null;
-           const tiles = this.landTiles.filter(i => this.regionId[i] === regionId);
+           const tiles = this.regionTileList(regionId);
            const info = {
                id: regionId,
                tiles,
