@@ -41,10 +41,10 @@ load it after the map scripts).
 
 ## Conventions
 
-- `SECTION: ...` banners group code. File-level sections in `map-painter.js` mirror
-  `MapGeneratorReference.js` naming (`MAP_COLORS`, `MAP_CONSTANTS`, `MAP_HASH & NOISE`,
-  `MAP_SHADING`, `PIXEL_BUFFER`, ...). Class methods are ordered in pipeline order, not
-  alphabetically.
+- `SECTION: ...` banners (inside `/* ===== */` blocks) group code, both file-level and
+  per class. Names mirror `MapGeneratorReference.js` where they overlap (`MAP_COLORS`,
+  `MAP_CONSTANTS`, `MAP_HASH_NOISE`, `MAP_SHADING`, `PIXEL_BUFFER`, ...). Full map is in
+  `CODE_GUIDE.md` §12. Class methods are ordered in pipeline order, not alphabetically.
 - Colors are packed into single `Int32` values (`packRgb`); use `mixPacked`/`shadePacked`.
 - Sprite dimensions are authored for a 12×12 tile and scaled via `px(n)` / `pxMin(n)`.
 - Never introduce `Math.random()` in generation or painting — determinism is a feature.

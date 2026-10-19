@@ -560,8 +560,9 @@ createNoiseLayers → allocateLayers
 - **Плоские массивы + `index(x, y)`**: вся карта в типизированных массивах.
 - **Один seed → одна карта**: `createRandom`/`factionRandom` и `hash32`/`tileHash`; никакого
   `Math.random()` в генерации и отрисовке.
-- **Секции-баннеры**: `/* ---------- N. Название ---------- */` внутри классов и
-  `/* ===== */` между крупными блоками файла; методы идут в порядке конвейера, не по алфавиту.
+- **Секции-баннеры**: `SECTION: ИМЯ` внутри `/* ===== */` между крупными блоками файла и
+  между группами методов класса; методы идут в порядке конвейера, не по алфавиту. Полный
+  список имён — в разделе 12 «Карта секций».
 - **Кэш-«гард»**: `const cache = this.XCache; if (cache && cache.source === ... && cache.key ===
   ...) return ...` — около десятка мест в painter'е (см. `OPTIMIZATION.md`, пункт 1).
 - **«Только данные» у менеджеров**: состояние передаётся в карту, карта оповещает подписчиков.
@@ -578,3 +579,82 @@ createNoiseLayers → allocateLayers
    `putImageData`) для всех видов × сезонов × стилей и сравнить хэш пикселей.
 5. **Тестер в браузере**: `map-test.html` прогоняет генерацию и отрисовку, считает хэши и
    сверяет с эталоном (см. `AGENTS.md`).
+
+## 12. Карта секций
+
+Все файлы размечены баннерами `SECTION: ИМЯ` внутри `/* ===== */`. Ниже — порядок секций
+(он же порядок кода: секции идут по конвейеру, не по алфавиту). Имена в `map-painter.js` и
+`map-generator.js` совпадают с `MapGeneratorReference.js` там, где смысл тот же.
+
+### map-generator.js — данные карты
+
+| Секция | Что внутри |
+|---|---|
+| `MAP_ENUMS` | `Terrain`, `Biome`, `Shore`, `Resource`, `ResourceInfo`, `ROAD_DIRECTIONS` |
+| `MAP_UTILS` | `clamp`, `growthStage`, `hash32`, `lerp`, `createRandom`, `rankNormalize`, `percentile` |
+| `MAP_NOISE` | класс `ValueNoise` (плавный шум 0..1) |
+| `MAP_GENERATOR` | класс `MapGenerator` целиком |
+| `GENERATE` | `generate()` — конвейер; `initGrowth`, `clearRoadResources`, `createNoiseLayers`, `allocateLayers` |
+| `GRID` | `index`, `neighbors`, `isLand` — доступ к клеткам |
+| `ELEVATION` | `generateElevation`, `scatterIslands`, `generateMoisture` |
+| `TERRAIN` | `classifyTerrain`, `removeSmallMountains`, `removeSmallIslands`, `collectComponent`, `collectLandComponent`, `collectLandTiles`, `computeWaterDepth`, `neighbors8` |
+| `CLIMATE` | `generateTemperature` |
+| `BIOMES` | `assignBiomes`, `pickBiome` |
+| `RESOURCES` | `placeResources`, `createPatchLayer`, `createDensityLayer` |
+| `RARE_RESOURCES` | `placeRareResources`, `placeGold`, `placeIron`, `tilesNearMountains`, `placeEther`, `createFaultLayer` |
+| `SHORES` | `classifyShores` |
+| `RIVERS` | `fillDepressions`, `isDiagonal`, `generateRivers`, `placeRiverCrossings` |
+| `REGIONS` | `buildRegions`, `shuffled`, `buildRegionCosts`, `regionNeighbors`, `regionAreas`, `pickRegionSeeds`, `markSquare`, `assignRegions`, `relaxRegionSeeds`, `repairRegionConnectivity`, `bestNeighborRegion`, `countRegionSizes`, `mergeSmallRegions`, `regionAcrossRiver`, `regionContacts`, `balanceRegionSizes`, `smoothRegionBorders`, `staysConnectedWithout`, `renumberRegions` |
+| `SETTLEMENTS` | `placeSettlements`, `settlementLevelFor`, `isSettlementSite`, `growSettlementGroup`, `commitSettlementGroup`, `computeHabitability` |
+| `ROADS` | `buildRoads`, `findRoadPath`, `roadStepCost`, `carveRoad` |
+| `TURN_ECONOMY_STATE` | `applyTurnState`, `onTurnState`, `applyEconomyState`, `onEconomyState` |
+| `FACTION_STATE` | `applyFactionState`, `onFactionState` |
+| `REGION_TOPOLOGY` | `regionTileList`, `regionGraph` |
+| `REGION_INFO` | `getRegionInfo` |
+| `TILE_INFO` | `getTileInfo` |
+| `MIN_HEAP` | класс `MinHeap` (нужен росту регионов) |
+
+### map-painter.js — пиксельная отрисовка
+
+| Секция | Что внутри |
+|---|---|
+| `MAP_COLORS` | `COLORS` — цвета, не зависящие от сезона |
+| `MAP_PACKED_COLORS` | `packRgb`, `hexToPacked`, `hslToPacked`, `mixPacked`, `speckColor`, `shadeFast`, `shadePacked`, `MOUNTAIN_RAMP`, `packPalette` |
+| `MAP_CONSTANTS` | `SNOW_TEMPERATURE`, `ICE_TEMPERATURE`, `WATER_DEPTH_STEPS`, `STEP_AMOUNTS`, `BAYER` |
+| `MAP_HASH_NOISE` | `tileHash`, `hashUnit`, `smoothstep`, класс `LatticeNoise` |
+| `MAP_SHADING` | `computeHillShading`, `applyHillShading` |
+| `PIXEL_BUFFER` | класс `PixelBuffer` |
+| `MAP_PAINTER` | класс `MapPainter` целиком |
+| `PAINT` | `paint()` — порядок слоёв |
+| `HELPERS` | `px`, `tileOfPixel`, `forEachTile`, `seasonalTemperature`, `put`, `blend`, `rect`, `linePoints` |
+| `BACKGROUND` | `paintBase`, `blendGrid`, `blendChoices`, `buildAxisTables`, `isUniform`, `smoothCoast`, `buildTileColors`, `tileColor`, `waterColor`, `groundColor`, `snowCoverage`, `nearRiver`, `fertilityTint`, `shadeStep` |
+| `HILLS` | `paintHills`, `buildHillHeights` |
+| `SHORES` | `paintShores`, `paintCliffs` |
+| `MOUNTAIN_RELIEF` | `buildReliefHeights`, `blurHeights`, `prepareReliefRows`, `paintReliefRow`, `fillColumn`, `blurMountainHeights`, `mountainFootprint`, `tilesNearRelief`, `snowLevel` |
+| `RIVERS` | `riverWidthAt`, `riverWidth`, `band`, `paintRivers`, `buildRiverGeometry`, `paintBankPixel` |
+| `TEXTURE` | `paintTexture`, `speckLayout`, `paintGroundDetail`, `paintTufts`, `putGround` |
+| `DARK_STYLE` | `moodize`, `applyGrading`, `buildFog`, `drawLight` |
+| `DARK_PROPS` | `collectProps`, `drawBones`, `drawCrow`, `drawRuin`, `drawGibbet` |
+| `ROADS` | `roadWidth`, `paintRoads`, `buildRoadGeometry` |
+| `SETTLEMENTS` | `settlementLayout`, `layoutSettlement`, `paintSettlementGround`, `settlementGround`, `collectSettlement`, `houseColor`, `houseSprite`, `drawHouse`, `drawBuildingShadow`, `blitSprite` |
+| `ORE` | `oreSprite`, `drawOreTile` |
+| `ETHER` | `etherSprite`, `drawEther` |
+| `REGION_BORDERS` | `buildPixelRegions`, `computePixelRegions`, `smoothPixelRegions`, `paintRegionBorders` |
+| `OUTLINES_GRID` | `traceOutline`, `regionOutline`, `buildCellMap`, `cellAt`, `cellOutline`, `paintGrid` |
+| `FACTIONS` | `territoriesFromMap`, `paintTerritories` |
+| `DECORATIONS` | `paintScene`, `collectDecorations`, `collectTrees`, `drawShadow`, `drawBroadleaf`, `drawBareTree`, `drawConifer`, `drawWheat`, `liftAtTile`, `paintCrossing`, `crossingDirections` |
+
+### Остальные файлы
+
+| Файл | Секции |
+|---|---|
+| `seasons.js` | `SEASONS` (палитры), `DARK_SEASONS` (тёмный стиль) |
+| `map-renderer.js` | `MAP_RENDERER`, `PUBLIC`, `FACTIONS`, `OBJECTS`, `CAMERA`, `SELECTION`, `RENDER`, `INPUT` |
+| `faction-manager.js` | `FACTION_MANAGER`, `STATE`, `CONTROL`, `READ`, `START_FACTIONS` |
+| `economy-manager.js` | `ECONOMY_MANAGER`, `STATE`, `STEP`, `READ`, `SAVE`, `PLACEHOLDER` |
+| `turn-manager.js` | `TURN_MANAGER`, `CALENDAR`, `PHASES`, `TURN`, `SAVE` |
+| `main.js` | `MAIN`, `NAMES`, `ACTIONS`, `SELECTION`, `BUTTONS`, `DEMO_OBJECTS` |
+| `sprite-renderer.js` | `SPRITE_RENDERER`, `CONFIG`, `COLORS`, `LAYERS`, `OUTPUT` |
+| `sprite-examples.js` | `SPRITE_EXAMPLES` |
+
+Проверить разметку: `grep -n "SECTION:" *.js`.
