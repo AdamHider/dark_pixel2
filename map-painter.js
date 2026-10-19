@@ -307,7 +307,7 @@ class MapPainter {
             factionCoastBorder: true,  // граница фракции идёт и вдоль берега моря и озёр
             factionRiverBorder: 'boundary', // вдоль берегов рек: 'always' — всегда (река в территорию не входит), 'boundary' — только если на том берегу другая территория
             regionShoreBorder: false,   // граница региона идёт и вдоль берега моря, озёр и рек (реки в регионы не входят)
-            gridOpacity: 0.08,     // насколько заметна сетка клеток (0..1)
+            gridOpacity: 0.15,     // насколько заметна сетка клеток (0..1)
             regionBorderSmoothing: 7, // радиус (в пикселях) сглаживания углов границ регионов: больше — круглее; 0 — не сглаживать
             layers: {},            // режим разработки: { relief: false, hills: false, ... } отключает слои (см. paint)
             spriteOutline: false,  // тёмный контур вокруг построек, руд и эфира (в стиле dark fantasy выключен)
@@ -1011,7 +1011,7 @@ class MapPainter {
             const threshold = BAYER[(gy & 3) * 4 + (gx & 3)];
             const mark = kind[k];
             if (mark >= 20) { if (threshold < 0.4) pixels[k] = mixPacked(pixels[k], WHITE, 0.16); }
-            else if (threshold < 0.85) pixels[k] = mixPacked(pixels[k], WHITE, mark === 10 + Shore.BEACH ? 0.45 : 0.3);
+            else if (threshold < 0.85) pixels[k] = mixPacked(pixels[k], WHITE, mark === 10 + Shore.BEACH ? 0 : 0.3);
         }
 
         this.paintCliffs(queue, distance, kind);
@@ -1389,7 +1389,7 @@ class MapPainter {
             const color = riverColor(tileOf(k));
             const deep = d === 1 && ((xx > 0 && mask[k - 1] > 0 && distance[k - 1] !== 1) || (xx < W - 1 && mask[k + 1] > 0 && distance[k + 1] !== 1)
                 || (yy > 0 && mask[k - W] > 0 && distance[k - W] !== 1) || (yy < W - 1 && mask[k + W] > 0 && distance[k + W] !== 1));
-            pixels[k] = deep ? mixPacked(color, WHITE, 0.2) : color;
+            pixels[k] = deep ? mixPacked(color, WHITE, 0) : color;
         }
 
         // Берег: первый пиксель суши — ровная тёмная линия, второй — редкая галька или песок на пляжных и каменистых берегах.

@@ -42,7 +42,10 @@ class FactionManager {
             // Стартовые фракции. regions — сколько регионов: число или [мин, макс].
             factions: [
                 { name: 'Красные', color: '#d94a3a', regions: [4, 5] },
-                { name: 'Синие', color: '#3b6fd4', regions: [4, 5] }
+                { name: 'Синие', color: '#3b6fd4', regions: [4, 5] },
+                { name: 'Желтые', color: '#FFDB58', regions: [4, 5] },
+                { name: 'Розовые', color: '#FFB6C1', regions: [4, 5] },
+                { name: 'Зелёные', color: '#808000', regions: [4, 5] }
             ],
             seedDistance: 5,   // на каком расстоянии (в регионах) друг от друга стоят столицы
             attempts: 160,     // сколько раскладок перебрать при расстановке; берётся лучшая по ресурсам и равенству сторон

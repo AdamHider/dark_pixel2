@@ -97,7 +97,7 @@ const SEASONS = {
             rock: '#6f6e78',
             water: ['#4a7a94', '#3d6780', '#31546b', '#274456', '#1e3646'],
             ice: ['#d7e6ed', '#c2d6e0', '#a9c3d1'],
-            snow: '#f2f6f8', snowShade: '#d3dde3',
+            snow: '#d2d7da', snowShade: '#b5bcc1',
             broadleaf: ['#5b4a3c'],
             conifer: ['#24402d', '#2f4f38'],
             trunk: '#5b4a3c',
