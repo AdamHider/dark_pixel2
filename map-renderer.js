@@ -21,8 +21,11 @@
             selectionShape: 'adaptive', // выделение клетки: 'adaptive' — по форме её ячейки на карте (у берега, рек и границ
                                         // регионов она подогнана под форму региона), 'square' — скруглённый квадрат клетки
             selectionCorner: 0,    // скругление рамки клетки в режиме 'square': доля стороны клетки (0 — прямые углы, 0.5 — круг)
-            outlineSmoothing: 0,   // сколько раз скруглять углы контура выделенного региона (0 — как есть, по пикселям карты)
-            cellSmoothing: 0,      // сглаживание контура выделенной ячейки: сглаживаются только мелкие ступеньки вдоль воды и границ,
+            outlineSmoothing: 3,   // сколько раз скруглять углы контура выделенного региона (0 — как есть, по пикселям карты)
+            autoRepaint: true,     // когда перерисовывать карту после ходов: true — при смене сезона и при видимых изменениях экономики (рост лесов и полей,
+                                   // уровень поселений); 'season' — только при смене сезона (изменения экономики накопятся до него); false — никогда.
+                                   // Полная перерисовка тяжёлая (секунды), а видимые изменения экономики бывают почти каждый ход.
+            cellSmoothing: 2,      // сглаживание контура выделенной ячейки: сглаживаются только мелкие ступеньки вдоль воды и границ,
                                    // а прямые линии сетки и их углы остаются строго прямыми (0 — точная форма по пикселям)
             ...options
         };
@@ -36,6 +39,11 @@
         this.showBorders = true;
         this.showGrid = false;     // сетка клеток поверх карты (см. setShowGrid)
         this.gridLayer = null;     // холст с линиями сетки; строится, пока сетка включена
+        this.showFactions = true;  // цветные границы фракций поверх карты (см. setShowFactions)
+        this.territories = null;   // свои территории (setTerritories); null — показывать состояние фракций из карты
+        this.territoriesVersion = 0;
+        this.factionLayer = null;  // холст со слоем фракций; строится по версии данных (map.factionVersion или territoriesVersion)
+        this.factionLayerVersion = -1;
         this.camera = { x: 0, y: 0, zoom: 1 };
         this.sprites = new SpriteRenderer();
         this.objects = [];         // объекты на карте: города, армии... (см. setObjects)
@@ -48,9 +56,44 @@
         this.pressStart = null;
         this.lastPointer = { x: 0, y: 0 };
 
+        // Состояние фракций, хода и экономики приходит в карту от соответствующих менеджеров; рендерер реагирует сам и ничего о них не знает.
+        this.unsubscribers = [];
+        this.rebuildScheduled = false;
+        if (typeof map.onFactionState === 'function') this.unsubscribers.push(map.onFactionState(() => this.draw()));
+        if (typeof map.onTurnState === 'function') this.unsubscribers.push(map.onTurnState(state => this.onTurnState(state)));
+        if (typeof map.onEconomyState === 'function') this.unsubscribers.push(map.onEconomyState(change => this.onEconomyState(change)));
+
         this.bindEvents();
         new ResizeObserver(() => this.resize()).observe(canvas);
         this.resize();
+    }
+
+    // Отписаться от карты (если рендерер больше не нужен, а карта живёт дальше).
+    destroy() {
+        for (const unsubscribe of this.unsubscribers) unsubscribe();
+        this.unsubscribers = [];
+    }
+
+    /* Ход и экономика: что-то на карте изменилось. Полная перерисовка карты тяжёлая, поэтому запросы собираются: за один ход
+       может поменяться и сезон, и рост лесов, а перерисуем мы один раз (в конце текущего вызова, не блокируя промежуточные шаги). */
+    onTurnState(state) {
+        if (!this.options.autoRepaint || !state.season || state.season === this.seasonName || !SEASONS[state.season]) return;
+        this.seasonName = state.season;
+        this.scheduleRebuild();
+    }
+
+    onEconomyState(change) {
+        if (this.options.autoRepaint === true && change.visualChanged) this.scheduleRebuild();
+    }
+
+    scheduleRebuild() {
+        if (this.rebuildScheduled || this.buffer.width === 0) return;      // до первой отрисовки (refresh) перерисовывать нечего
+        this.rebuildScheduled = true;
+        Promise.resolve().then(() => {
+            this.rebuildScheduled = false;
+            this.rebuildBuffer();
+            this.draw();
+        });
     }
 
     /* ---------- Публичные методы ---------- */
@@ -100,6 +143,49 @@
         this.showGrid = show;
         this.gridLayer = show ? this.painter.paintGrid() : null;
         this.draw();
+    }
+
+    /* ---------- Фракции ---------- */
+
+    /* Слой фракций: цветная граница и лёгкая заливка земель каждой фракции. Рисуется отдельным слоем поверх карты, поэтому
+       смена владения не перерисовывает карту.
+
+       По умолчанию слой строится из состояния, которое faction manager передал в карту (map.factions и map.tileFaction), и сам
+       обновляется, когда оно меняется (map.factionVersion): менеджер вызывает свои claimTiles / claimRegion / releaseTiles,
+       передаёт состояние в карту, а рендерер перерисовывается сам. Рендерер ничего не знает о менеджере.
+
+       Если нужно показать что-то своё (спорные клетки, цели похода, зоны влияния), faction manager передаёт территории:
+         renderer.setTerritories([
+           { id: 'red', color: '#d94a3a', regions: [3, 4, 9], tiles: [1520, 1521] },   // регионы и/или отдельные клетки
+           { id: 'zone', color: '#ffd24a', tiles: [...], fill: 0.2, border: 3 }        // fill и border — по желанию
+         ]);
+       renderer.setTerritories(null) возвращает показ по данным карты. Если свой список изменили на месте — вызовите
+       renderer.refreshFactions(). Описание полей — у painter.paintTerritories. */
+    setShowFactions(show) {
+        this.showFactions = show;
+        this.draw();
+    }
+
+    setTerritories(list) {
+        this.territories = list ? list.slice() : null;
+        this.refreshFactions();
+    }
+
+    // Пересобрать слой фракций (нужно, если свой список территорий изменили на месте).
+    refreshFactions() {
+        this.territoriesVersion++;
+        this.factionLayerVersion = -1;
+        this.draw();
+    }
+
+    // Слой строится лениво: только если фракции показываются и данные изменились с прошлого раза (~0.2 с).
+    ensureFactionLayer() {
+        if (!this.showFactions) return;
+        const version = this.territories ? 'custom' + this.territoriesVersion : 'map' + this.map.factionVersion;
+        if (this.factionLayer && this.factionLayerVersion === version) return;
+        const list = this.territories || this.painter.territoriesFromMap();
+        this.factionLayer = list.length > 0 ? this.painter.paintTerritories(list) : null;
+        this.factionLayerVersion = version;
     }
 
     /* ---------- Объекты (города, деревни, армии...) ---------- */
@@ -175,6 +261,7 @@
         this.buffer = this.painter.paint({ view: this.view, seasonName: this.seasonName, showBorders: this.showBorders, mood: this.mood });
         if (this.options.selectionShape === 'adaptive') this.painter.buildCellMap();   // один раз на карту, ~0.1 с
         this.gridLayer = this.showGrid ? this.painter.paintGrid() : null;
+        this.factionLayerVersion = -1;            // форма территорий зависит от того, как нарисована карта — слой пересоберётся при показе
         // Форма региона и ячейки зависит от того, как нарисована карта (вид, берега) — пересчитываем контуры выделения.
         if (this.selection) {
             if (this.selection.region) this.selection.shape = this.regionShape(this.selection.region);
@@ -393,10 +480,10 @@
             ctx.setTransform(camera.zoom, 0, 0, camera.zoom, -camera.x * camera.zoom, -camera.y * camera.zoom);
             ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
             ctx.fill(cellPath, 'evenodd');
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
             ctx.lineWidth = 4 / camera.zoom;
             ctx.stroke(cellPath);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.strokeStyle = '#ffffff';
             ctx.lineWidth = 2 / camera.zoom;
             ctx.stroke(cellPath);
             ctx.restore();
@@ -445,6 +532,8 @@
         const destW = (srcRight - srcX) * camera.zoom, destH = (srcBottom - srcY) * camera.zoom;
         ctx.drawImage(this.buffer, srcX, srcY, srcRight - srcX, srcBottom - srcY, destX, destY, destW, destH);
         if (this.gridLayer) ctx.drawImage(this.gridLayer, srcX, srcY, srcRight - srcX, srcBottom - srcY, destX, destY, destW, destH);
+        this.ensureFactionLayer();
+        if (this.showFactions && this.factionLayer) ctx.drawImage(this.factionLayer, srcX, srcY, srcRight - srcX, srcBottom - srcY, destX, destY, destW, destH);
         this.drawSelection();
         this.drawObjects();
     }

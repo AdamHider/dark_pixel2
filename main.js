@@ -60,7 +60,12 @@ const seedInput = document.getElementById('seed');
 
 function buildMap() {
     generator.generate(Number(seedInput.value) || 1);
+    const factions = new FactionManager(generator);      // фракции пока пустые
+    factions.generate();                           // стартовые фракции (по умолчанию красные и синие по 4–5 регионов)
     renderer.refresh();
+    factions.claimTiles(0, [1520, 1521]);          // дальше управляем только через менеджер — карта обновится сама
+    factions.claimRegion(1, 17);
+    factions.getFactionInfo(0);                    // территория, население, ресурсы, доход
     showStats();
 }
 

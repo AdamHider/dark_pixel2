@@ -300,6 +300,13 @@ class MapPainter {
             settlementMaxHouses: 3, // домиков в клетке высшего уровня (если они помещаются)
             settlementOverflow: 0.25, // на сколько (доля клетки) основание дома может выйти за границу своей клетки
             coastSmoothing: 7,     // радиус (в пикселях) сглаживания берега: больше — круглее; 0 — не сглаживать
+            riverTails: true,      // истончающиеся декоративные концы у истоков рек (река постепенно сходит на нет)
+            factionBorder: 2,      // толщина цветной границы фракции в пикселях (для клетки 16×16; масштабируется вместе с клеткой)
+            factionBorderOpacity: 0.95,
+            factionFill: 0.1,      // лёгкая заливка земель фракции цветом фракции (0 — без заливки)
+            factionCoastBorder: true,  // граница фракции идёт и вдоль берега моря и озёр
+            factionRiverBorder: 'always', // вдоль берегов рек: 'always' — всегда (река в территорию не входит), 'boundary' — только если на том берегу другая территория
+            regionShoreBorder: true,   // граница региона идёт и вдоль берега моря, озёр и рек (реки в регионы не входят)
             gridOpacity: 0.28,     // насколько заметна сетка клеток (0..1)
             regionBorderSmoothing: 7, // радиус (в пикселях) сглаживания углов границ регионов: больше — круглее; 0 — не сглаживать
             layers: {},            // режим разработки: { relief: false, hills: false, ... } отключает слои (см. paint)
@@ -334,6 +341,8 @@ class MapPainter {
         const image = this.ctx.createImageData(this.width, this.width);
         this.pixels = new Int32Array(image.data.buffer); // Int32: значения помещаются в «маленькие целые», это заметно быстрее, чем Uint32
         this.waterMask = new Uint8Array(this.width * this.width); // 1 — пиксель воды (заполняется при рисовании фона)
+        this.spriteMask = new Uint8Array(this.width * this.width); // 1 — пиксель закрыт деревом, домом, рудой и т. п.: слои фракций и сетки под ними не видны
+        this.cover = false;                                       // пока true, всё, что рисует put(), попадает в spriteMask
         this.riverMask = null;
         this.relief = null;
         this.reliefHeight = null;
@@ -366,7 +375,9 @@ class MapPainter {
         if (terrain && (layers.decorations || layers.relief)) this.paintScene();
 
         if (terrain && this.mood === 'dark' && this.options.grade && layers.grading) this.applyGrading();
+        this.cover = true;                              // светящиеся детали (окна, костры, эфир) — тоже над землёй
         for (const draw of this.emissive) draw();
+        this.cover = false;
 
         this.ctx.putImageData(image, 0, 0);
         return this.canvas;
@@ -392,7 +403,11 @@ class MapPainter {
     }
 
     put(x, y, color) {
-        if (x >= 0 && y >= 0 && x < this.width && y < this.width) this.pixels[y * this.width + x] = color;
+        if (x >= 0 && y >= 0 && x < this.width && y < this.width) {
+            const k = y * this.width + x;
+            this.pixels[k] = color;
+            if (this.cover) this.spriteMask[k] = 1;
+        }
     }
 
     blend(x, y, color, alpha) {
@@ -996,7 +1011,7 @@ class MapPainter {
             const threshold = BAYER[(gy & 3) * 4 + (gx & 3)];
             const mark = kind[k];
             if (mark >= 20) { if (threshold < 0.4) pixels[k] = mixPacked(pixels[k], WHITE, 0.16); }
-            else if (threshold < 0.85) pixels[k] = mixPacked(pixels[k], WHITE, mark === 10 + Shore.BEACH ? 0 : 0);
+            else if (threshold < 0.85) pixels[k] = mixPacked(pixels[k], WHITE, mark === 10 + Shore.BEACH ? 0.45 : 0.3);
         }
 
         this.paintCliffs(queue, distance, kind);
@@ -1349,7 +1364,7 @@ class MapPainter {
        снаружи — ровная линия берега. Чёткий контур читается лучше, чем размытая дизерингом кромка. */
     paintRivers() {
         const geometry = this.buildRiverGeometry();
-        this.riverMask = geometry.mask;
+        this.riverMask = geometry.riverOnly;                       // без декоративных концов: по ней считаются дороги, мосты и регионы
         if (geometry.riverTiles.length === 0) return;
 
         const { mask, queue, distance, levelNear, solid } = geometry;
@@ -1361,21 +1376,20 @@ class MapPainter {
         const iceRiver = tile => this.seasonalTemperature(tile) < RIVER_ICE_TEMPERATURE;
         const bankColors = new Map();                              // тёмный цвет берега считаем один раз на каждый цвет земли
 
-        for (const k of solid) {                                   // сердцевина реки — сплошной цвет
-            const shades = iceRiver(tileOf(k)) ? this.packed.ice : this.packed.riverShades;
-            pixels[k] = shades[mask[k] - 1];
-        }
+        // Все реки — самой мелкой воды, цвета прибрежного мелководья (а не по глубине); зимой — лёд.
+        const riverColor = tile => (iceRiver(tile) ? this.packed.ice[0] : this.packed.waterShades[0]);
+
+        for (const k of solid) pixels[k] = riverColor(tileOf(k));   // сердцевина реки — сплошной цвет
 
         // Вода до самого края; внутренний край — светлее, если за ним есть ещё вода (то есть река шире двух пикселей).
         for (const k of queue) {
             const d = distance[k];
             if (d <= 0) continue;
             const xx = k % W, yy = (k - xx) / W;
-            const shades = iceRiver(tileOf(k)) ? this.packed.ice : this.packed.riverShades;
-            const color = shades[mask[k] - 1];                      // свой уровень пикселя, как у сердцевины, — без ступенек цвета у кромки
+            const color = riverColor(tileOf(k));
             const deep = d === 1 && ((xx > 0 && mask[k - 1] > 0 && distance[k - 1] !== 1) || (xx < W - 1 && mask[k + 1] > 0 && distance[k + 1] !== 1)
                 || (yy > 0 && mask[k - W] > 0 && distance[k - W] !== 1) || (yy < W - 1 && mask[k + W] > 0 && distance[k + W] !== 1));
-            pixels[k] = deep ? mixPacked(color, WHITE, 0) : color;
+            pixels[k] = deep ? mixPacked(color, WHITE, 0.2) : color;
         }
 
         // Берег: первый пиксель суши — ровная тёмная линия, второй — редкая галька или песок на пляжных и каменистых берегах.
@@ -1391,7 +1405,7 @@ class MapPainter {
        пикселей кромки с расстоянием до края и список «сердцевины». Кэш сбрасывается при смене карты или параметров резкости. */
     buildRiverGeometry() {
         const map = this.map;
-        const key = [this.tileSize, this.options.coastSharpness, this.options.blendSharpness, this.options.coastSmoothing, this.seedSalt].join('|');
+        const key = [this.tileSize, this.options.coastSharpness, this.options.blendSharpness, this.options.coastSmoothing, this.seedSalt, this.options.riverTails].join('|');
         const cache = this.riverCache;
         if (cache && cache.source === map.river && cache.key === key) return cache;
 
@@ -1404,7 +1418,7 @@ class MapPainter {
         for (let i = 0; i < map.river.length; i++) {
             if (map.river[i] > 0) riverTiles.push(i);
         }
-        const empty = { source: map.river, key, riverTiles, mask, queue: new Int32Array(0), distance: null, levelNear: null, solid: new Int32Array(0) };
+        const empty = { source: map.river, key, riverTiles, mask, riverOnly: mask, queue: new Int32Array(0), distance: null, levelNear: null, solid: new Int32Array(0) };
         if (riverTiles.length === 0) {
             this.riverCache = empty;
             return empty;
@@ -1452,6 +1466,55 @@ class MapPainter {
             points.forEach(([px, py], k) => stamp(px, py, widthFrom + (widthTo - widthFrom) * (k / Math.max(1, points.length - 1)), level));
         }
 
+        // 1б) истончающиеся концы: за истоком река продолжается в сушу, плавно сужаясь до нуля. Это только украшение: в
+        //     riverOnly (по ней считаются дороги, мосты и регионы) концы не входят, в mask — входят (рисуются как река).
+        const riverOnly = Uint8Array.from(mask);
+        const tailTiles = new Set();
+        if (this.options.riverTails) {
+            const fed = new Uint8Array(size * size);                           // клетки, в которые впадает другая клетка реки
+            for (const i of riverTiles) {
+                const to = map.riverTo[i];
+                if (to >= 0 && map.river[to] > 0) fed[to] = 1;
+            }
+            for (const i of riverTiles) {
+                const to = map.riverTo[i];
+                if (fed[i] || to === -1) continue;                             // не исток
+                const x = i % size, y = Math.floor(i / size);
+                const [ax, ay] = centerOf(i);
+                const [bx, by] = centerOf(to);
+                const heading = Math.atan2(ay - by, ax - bx);                  // против течения, вглубь суши
+                const wanted = Math.round(T * (1.8 + 1.4 * hashUnit(x, y, 986)));
+                const phase = hashUnit(x, y, 987) * Math.PI * 2, phase2 = hashUnit(x, y, 988) * Math.PI * 2;
+                const swing = hashUnit(x, y, 989) < 0.5 ? 1 : -1;
+
+                // Сначала «сухой прогон»: идём, пока не упрёмся в воду, другую реку или горы, — тогда конец сужается до нуля
+                // ровно к этому месту, а не обрывается.
+                const path = [];
+                let px = ax, py = ay;
+                for (let n = 0; n < wanted; n++) {
+                    const angle = heading + swing * (0.45 * Math.sin(phase + n / (T * 0.9) * Math.PI * 2) + 0.25 * Math.sin(phase2 + n / (T * 1.7) * Math.PI * 2));
+                    px += Math.cos(angle);
+                    py += Math.sin(angle);
+                    const rx = Math.round(px), ry = Math.round(py);
+                    if (rx < 0 || ry < 0 || rx >= W || ry >= W) break;
+                    const tile = Math.floor(ry / T) * size + Math.floor(rx / T);
+                    if (tile !== i && (map.river[tile] > 0 || !map.isLand(tile) || map.terrain[tile] === Terrain.MOUNTAIN)) break;
+                    if (this.waterMask[ry * W + rx]) break;
+                    path.push([rx, ry, tile]);
+                }
+                if (path.length < 5) continue;
+
+                const widthStart = this.riverWidthAt(i);
+                path.forEach(([rx, ry, tile], n) => {
+                    const t01 = n / path.length;
+                    const width = widthStart * Math.pow(1 - t01, 1.2);
+                    // Толстая часть — круглым пером; когда ширина меньше пикселя, остаётся пунктир, всё реже (равномерно, без случайных пятен).
+                    if (width >= 1.2 || (width * 0.83) > ((n * 0.6180339887 + hashUnit(x, y, 990)) % 1)) stamp(rx, ry, Math.max(1, width), 1);
+                    tailTiles.add(tile);
+                });
+            }
+        }
+
         // 2) расстояние до края реки: внутри — положительное, снаружи — отрицательное; ширина перехода из coastSharpness
         const edgeWidth = Math.max(2, T / this.options.coastSharpness);
         const reachPx = Math.ceil(edgeWidth / 2) + 1;
@@ -1462,7 +1525,7 @@ class MapPainter {
 
         // Клетки, где может быть вода реки: сами реки и их соседи. Каждый пиксель — один раз.
         const zone = new Set();
-        for (const i of riverTiles) {
+        for (const i of [...riverTiles, ...tailTiles]) {
             zone.add(i);
             for (const near of map.neighbors8(i)) zone.add(near);
         }
@@ -1515,7 +1578,7 @@ class MapPainter {
             }
         }
 
-        this.riverCache = { source: map.river, key, riverTiles, mask, queue: Int32Array.from(queue), distance, levelNear, solid: Int32Array.from(solid) };
+        this.riverCache = { source: map.river, key, riverTiles, mask, riverOnly, queue: Int32Array.from(queue), distance, levelNear, solid: Int32Array.from(solid) };
         return this.riverCache;
     }
 
@@ -1770,10 +1833,10 @@ class MapPainter {
             const base = y * T + Math.round(hashUnit(x, y, 952) * (T - 4)) + 3;
             const dry = [Biome.STEPPE, Biome.DESERT, Biome.TUNDRA, Biome.SAVANNA].includes(map.biome[i]);
 
-            if (dry && roll < 0.014) items.push({ y: base, x: cx, draw: () => this.drawBones(cx, base) });
-            else if (!dry && roll < 0.006) items.push({ y: base, x: cx, draw: () => this.drawCrow(cx, base) });
-            else if (roll > 0.994 && roll <= 0.9985) items.push({ y: base, x: cx, draw: () => this.drawRuin(cx, base, x, y) });
-            else if (roll > 0.9985) items.push({ y: base, x: cx, draw: () => this.drawGibbet(cx, base) });
+            if (dry && roll < 0.014) items.push({ y: base, x: cx, cover: true, draw: () => this.drawBones(cx, base) });
+            else if (!dry && roll < 0.006) items.push({ y: base, x: cx, cover: true, draw: () => this.drawCrow(cx, base) });
+            else if (roll > 0.994 && roll <= 0.9985) items.push({ y: base, x: cx, cover: true, draw: () => this.drawRuin(cx, base, x, y) });
+            else if (roll > 0.9985) items.push({ y: base, x: cx, cover: true, draw: () => this.drawGibbet(cx, base) });
         });
     }
 
@@ -1929,8 +1992,9 @@ class MapPainter {
     settlementLayout(x, y, i) {
         const map = this.map;
         const cache = this.settlementLayoutCache;
-        if (!cache || cache.source !== map.population || cache.tileSize !== this.tileSize || cache.salt !== this.seedSalt) {
-            this.settlementLayoutCache = { source: map.population, tileSize: this.tileSize, salt: this.seedSalt, layouts: new Map() };
+        // Экономика меняет население и уровни на месте, поэтому раскладка зависит ещё и от версии видимых изменений карты.
+        if (!cache || cache.source !== map.population || cache.tileSize !== this.tileSize || cache.salt !== this.seedSalt || cache.visual !== map.visualVersion) {
+            this.settlementLayoutCache = { source: map.population, tileSize: this.tileSize, salt: this.seedSalt, visual: map.visualVersion, layouts: new Map() };
         }
         const layouts = this.settlementLayoutCache.layouts;
         if (!layouts.has(i)) layouts.set(i, this.layoutSettlement(x, y, i));
@@ -2100,7 +2164,7 @@ class MapPainter {
         const snow = this.snowCoverage(i);
         for (const part of layout.houses) {
             const sprite = this.houseSprite(part, part.roll, snow);
-            items.push({ y: part.base, x: part.x, draw: () => this.drawHouse(sprite, part.x, part.base, part, layout.level) });
+            items.push({ y: part.base, x: part.x, cover: true, draw: () => this.drawHouse(sprite, part.x, part.base, part, layout.level) });
         }
     }
 
@@ -2498,13 +2562,23 @@ class MapPainter {
         const color = this.colors.regionBorder;
         const owner = this.buildPixelRegions();
         const last = W * (W - 1);
+        const shore = this.options.regionShoreBorder;
+        const water = this.waterMask, river = this.riverMask;
+        const isWet = j => water[j] === 1 || (river !== null && river[j] > 0);
 
         for (let k = 0; k < owner.length; k++) {
             const id = owner[k];
             if (id < 0) continue;
-            const right = k % W < W - 1 ? owner[k + 1] : -1;
+            const x = k % W;
+            const right = x < W - 1 ? owner[k + 1] : -1;
             const below = k < last ? owner[k + W] : -1;
-            if (!((right >= 0 && right !== id) || (below >= 0 && below !== id))) continue;
+            let border = (right >= 0 && right !== id) || (below >= 0 && below !== id);
+            // Береговая линия: пиксель суши рядом с морем, озером или рекой тоже граница региона (реки в регионы не входят).
+            if (!border && shore) {
+                border = (x > 0 && owner[k - 1] < 0 && isWet(k - 1)) || (x < W - 1 && owner[k + 1] < 0 && isWet(k + 1))
+                    || (k >= W && owner[k - W] < 0 && isWet(k - W)) || (k < W * (W - 1) && owner[k + W] < 0 && isWet(k + W));
+            }
+            if (!border) continue;
 
             const alpha = relief ? 0.6 - 0.5 * Math.min(1, relief[k] / 110) : 0.6; // в горах границы почти растворяются
             this.pixels[k] = mixPacked(this.pixels[k], color, alpha);
@@ -2737,9 +2811,10 @@ class MapPainter {
         const light = (255 << 16 | 255 << 8 | 255) | (alpha << 24);   // RGBA в порядке байтов r, g, b, a (little-endian)
         const dark = alpha << 24;
 
+        const covered = this.spriteMask;                         // сетка тоже идёт по земле: под деревьями и домами её не видно
         for (let k = 0; k < cellOf.length; k++) {
             const cell = cellOf[k];
-            if (cell < 0) continue;
+            if (cell < 0 || covered[k] === 1) continue;
             const x = k % W, id = owner[k];
             const right = x < W - 1 && owner[k + 1] === id && cellOf[k + 1] !== cell;
             const below = k < W * (W - 1) && owner[k + W] === id && cellOf[k + W] !== cell;
@@ -2747,6 +2822,142 @@ class MapPainter {
             const color = base[k];
             const luminance = ((color & 255) * 299 + ((color >> 8) & 255) * 587 + ((color >> 16) & 255) * 114) / 1000;
             lines[k] = luminance > 120 ? dark : light;
+        }
+        ctx.putImageData(image, 0, 0);
+        return canvas;
+    }
+
+    /* ---------- Фракции ---------- */
+
+    // Территории фракций по состоянию, которое faction manager передал в карту (map.factions и map.tileFaction), в формате для paintTerritories: [{ id, color, tiles }].
+    territoriesFromMap() {
+        const map = this.map;
+        if (!map.factions || map.factions.length === 0) return [];
+        const tiles = map.factions.map(() => []);
+        for (let i = 0; i < map.tileFaction.length; i++) {
+            const owner = map.tileFaction[i];
+            if (owner >= 0 && tiles[owner]) tiles[owner].push(i);
+        }
+        return map.factions.map(f => ({ id: f.id, color: f.color, tiles: tiles[f.id] }));
+    }
+
+    /* Слой территорий: прозрачный холст (в пикселях карты) с цветной границей и лёгкой заливкой земель каждой территории.
+       Граница идёт по реальной форме территории — по скруглённым границам регионов, а внутри региона по линиям сетки,
+       если территория занимает его не целиком. Вдоль берега и рек её нет: они и так видны, а реки внутри территории не
+       разрезают её на куски. Рисуется отдельным слоем (как сетка), поэтому смена владения не перерисовывает карту.
+
+       territories — то, что нужно показать (его может передавать и faction manager):
+         { id, color: '#d94a3a',
+           tiles: [индексы клеток],  regions: [id регионов],       // что именно подсвечиваем (можно и то и другое)
+           fill: 0.1,                                              // заливка (по умолчанию factionFill)
+           border: 2 }                                             // толщина границы (по умолчанию factionBorder)
+       Более поздняя территория перекрывает более раннюю там, где они пересекаются. Вызывать после paint(). */
+    paintTerritories(territories = this.territoriesFromMap()) {
+        const map = this.map;
+        const size = map.size;
+        const T = this.tileSize, W = this.width;
+        const owner = this.buildPixelRegions();
+        const cellOf = this.buildCellMap();
+
+        // клетка -> номер территории
+        const tileTerritory = new Int16Array(size * size).fill(-1);
+        let regionTiles = null;
+        territories.forEach((territory, n) => {
+            for (const tile of territory.tiles || []) if (tile >= 0 && tile < tileTerritory.length) tileTerritory[tile] = n;
+            if (territory.regions && territory.regions.length > 0) {
+                if (!regionTiles) {
+                    regionTiles = new Map();
+                    for (const i of map.landTiles) {
+                        const id = map.regionId[i];
+                        if (id < 0) continue;
+                        const list = regionTiles.get(id);
+                        if (list) list.push(i); else regionTiles.set(id, [i]);
+                    }
+                }
+                for (const id of territory.regions) for (const tile of regionTiles.get(id) || []) tileTerritory[tile] = n;
+            }
+        });
+
+        // пиксель -> номер территории (только земля; воду и реки не красим)
+        const pixelTerritory = new Int16Array(W * W).fill(-1);
+        for (let k = 0; k < pixelTerritory.length; k++) {
+            if (owner[k] >= 0 && cellOf[k] >= 0) pixelTerritory[k] = tileTerritory[cellOf[k]];
+        }
+
+        const widths = territories.map(t => Math.max(1, Math.round((t.border ?? this.options.factionBorder) * T / 16)));
+        const maxWidth = Math.max(1, ...widths);
+
+        // Граница: пиксели территории, рядом с которыми (по стороне) земля другой территории или ничья. У реки смотрим через русло
+        // на противоположный берег: граница есть, только если там уже другая территория (река внутри территории её не режет).
+        const river = this.riverMask, water = this.waterMask;
+        const coast = this.options.factionCoastBorder;
+        const riverAlways = this.options.factionRiverBorder !== 'boundary';
+        const total = pixelTerritory.length;
+        const DX = [-1, 1, 0, 0], DY = [0, 0, -1, 1];
+        const depth = new Uint8Array(W * W);
+        let frontier = [];
+        for (let k = 0; k < total; k++) {
+            const t = pixelTerritory[k];
+            if (t < 0) continue;
+            const x = k % W, y = (k - x) / W;
+            let edge = false;
+            for (let d = 0; d < 4 && !edge; d++) {
+                let nx = x + DX[d], ny = y + DY[d];
+                if (nx < 0 || ny < 0 || nx >= W || ny >= W) continue;
+                const j = ny * W + nx;
+                if (owner[j] >= 0) {                                   // земля: граница, если там другая территория или ничья
+                    edge = pixelTerritory[j] !== t;
+                } else if (water[j]) {
+                    edge = coast;
+                } else if (river && river[j] > 0) {
+                    if (riverAlways) { edge = true; continue; }       // граница вдоль любого берега реки
+                    for (let n = 0; n < 40; n++) {                     // иначе идём поперёк до противоположного берега
+                        nx += DX[d];
+                        ny += DY[d];
+                        if (nx < 0 || ny < 0 || nx >= W || ny >= W) break;
+                        const m = ny * W + nx;
+                        if (owner[m] >= 0) { edge = pixelTerritory[m] !== t; break; }
+                        if (!(river[m] > 0)) break;                    // река кончилась (озеро, море): берега напротив нет
+                    }
+                }
+            }
+            if (edge) {
+                depth[k] = 1;
+                frontier.push(k);
+            }
+        }
+        for (let layer = 2; layer <= maxWidth; layer++) {
+            const next = [];
+            for (const k of frontier) {
+                const t = pixelTerritory[k], x = k % W;
+                for (const j of [x > 0 ? k - 1 : -1, x < W - 1 ? k + 1 : -1, k - W, k + W]) {
+                    if (j < 0 || j >= pixelTerritory.length || depth[j] !== 0 || pixelTerritory[j] !== t) continue;
+                    depth[j] = layer;
+                    next.push(j);
+                }
+            }
+            frontier = next;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = W;
+        canvas.height = W;
+        const ctx = canvas.getContext('2d');
+        const image = ctx.createImageData(W, W);
+        const pixels = new Int32Array(image.data.buffer);
+        const rgb = territories.map(t => {
+            const c = hexToPacked(t.color || '#999999');
+            return (c & 255) | (((c >> 8) & 255) << 8) | (((c >> 16) & 255) << 16);
+        });
+        const borderAlpha = Math.round(255 * this.options.factionBorderOpacity);
+        const fillAlpha = territories.map(t => Math.round(255 * clamp(t.fill ?? this.options.factionFill)));
+
+        const covered = this.spriteMask;                         // под деревьями, домами и рудами слой не рисуем: граница идёт «по земле»
+        for (let k = 0; k < pixelTerritory.length; k++) {
+            const t = pixelTerritory[k];
+            if (t < 0 || covered[k] === 1) continue;
+            const alpha = depth[k] > 0 && depth[k] <= widths[t] ? borderAlpha : fillAlpha[t];
+            if (alpha > 0) pixels[k] = rgb[t] | (alpha << 24);
         }
         ctx.putImageData(image, 0, 0);
         return canvas;
@@ -2765,7 +2976,12 @@ class MapPainter {
         let next = 0;
         for (let gy = 0; gy < this.width; gy++) {
             if (relief) this.paintReliefRow(relief, gy);
-            while (next < items.length && items[next].y <= gy) items[next++].draw();
+            while (next < items.length && items[next].y <= gy) {
+                const item = items[next++];
+                this.cover = item.cover === true;      // деревья, дома, руды и т. п. закрывают границы и сетку; травинки и поля — нет
+                item.draw();
+                this.cover = false;
+            }
         }
     }
 
@@ -2779,14 +2995,17 @@ class MapPainter {
             const i = map.index(x, y);
             if (map.crossing[i]) this.paintCrossing(x, y, i);
 
+            // На дорогах нет ни леса, ни полей, ни руд (кроме клеток поселений) — даже если карта сгенерирована старой версией.
+            if (map.roadLevel[i] > 0 && map.resource[i] !== Resource.SETTLEMENT) return;
+
             switch (map.resource[i]) {
                 case Resource.WOOD: this.collectTrees(items, x, y, i); break;
                 case Resource.WHEAT: items.push({ y: y * T + Math.round(T * 0.6), x: x * T, draw: () => this.drawWheat(x, y) }); break;
-                case Resource.GOLD: items.push({ y: y * T + Math.round(T * 0.8), x: x * T, draw: () => this.drawOreTile(x, y, 'gold') }); break;
-                case Resource.IRON: items.push({ y: y * T + Math.round(T * 0.8), x: x * T, draw: () => this.drawOreTile(x, y, 'iron') }); break;
+                case Resource.GOLD: items.push({ y: y * T + Math.round(T * 0.8), x: x * T, cover: true, draw: () => this.drawOreTile(x, y, 'gold') }); break;
+                case Resource.IRON: items.push({ y: y * T + Math.round(T * 0.8), x: x * T, cover: true, draw: () => this.drawOreTile(x, y, 'iron') }); break;
                 case Resource.ETHER:
                     if (this.mood === 'dark') this.emissive.push(() => this.drawEther(x, y));   // самый яркий элемент мира: после цветокоррекции
-                    else items.push({ y: y * T + Math.round(T * 0.8), x: x * T, draw: () => this.drawEther(x, y) });
+                    else items.push({ y: y * T + Math.round(T * 0.8), x: x * T, cover: true, draw: () => this.drawEther(x, y) });
                     break;
                 case Resource.SETTLEMENT: this.collectSettlement(items, x, y, i); break;
             }
@@ -2807,7 +3026,10 @@ class MapPainter {
 
         const slots = [[0.26, 0.52], [0.74, 0.46], [0.5, 0.96]];
         const start = tileHash(x, y, 30) % slots.length;
-        const count = 2 + (tileHash(x, y, 31) % 3 === 0 ? 1 : 0);
+        // Сколько деревьев растёт в клетке: полный лес — 2–3, молодой (экономика ещё не вырастила) — меньше, вплоть до одного.
+        const full = 2 + (tileHash(x, y, 31) % 3 === 0 ? 1 : 0);
+        const stage = map.growth ? growthStage(map.growth[i]) : GROWTH_STAGES;
+        const count = stage === 0 ? 0 : Math.max(1, Math.round(full * stage / GROWTH_STAGES));
 
         for (let k = 0; k < count; k++) {
             const [fx, fy] = slots[(start + k) % slots.length];
@@ -2818,6 +3040,7 @@ class MapPainter {
             items.push({
                 y: base,
                 x: cx,
+                cover: true,
                 draw: () => (conifer ? this.drawConifer(cx, base, pick, withSnow) : this.drawBroadleaf(cx, base, pick))
             });
         }
@@ -2922,8 +3145,11 @@ class MapPainter {
         const T = this.tileSize;
         const stalk = hexToPacked(pal.wheatStalk);
         const head = hexToPacked(pal.wheatTop);
+        // Густота поля: полное — 8 стеблей, неполное (экономика ещё не вырастила или уже убрала) — меньше.
+        const stage = this.map.growth ? growthStage(this.map.growth[this.map.index(x, y)]) : GROWTH_STAGES;
+        const stalks = Math.round(8 * stage / GROWTH_STAGES);
 
-        for (let k = 0; k < 8; k++) {
+        for (let k = 0; k < stalks; k++) {
             const h = tileHash(x, y, 300 + k);
             const sx = x * T + (h % T);
             const sy = y * T + this.px(4) + ((h >>> 8) % (T - this.px(4)));  // основание стебля
