@@ -291,7 +291,7 @@ class MapPainter {
             mountainRagged: 0.34,  // 0..1: рваность кромки гор у подножия (0 — ровный край по клеткам, больше — «осыпь» и зубцы)
             mountainLight: 'left', // откуда падает свет на горы: 'left' (как у деревьев и холмов) или 'right' (как на референсе)
             hillStrength: 0.6,     // 0..1: заметность холмов и впадин на равнинах (0 — выключить)
-            ravineDensity: 0.5,    // 0..1: сколько оврагов в сухих местах (0 — нет)
+            ravineDensity: 0.2,    // 0..1: сколько оврагов в сухих местах (0 — нет)
             grassDensity: 1,       // густота пучков травы (множитель)
             shores: true,          // пляжи, каменистые берега и утёсы
             settlements: true,     // поселения (домики)
@@ -302,12 +302,12 @@ class MapPainter {
             coastSmoothing: 7,     // радиус (в пикселях) сглаживания берега: больше — круглее; 0 — не сглаживать
             riverTails: true,      // истончающиеся декоративные концы у истоков рек (река постепенно сходит на нет)
             factionBorder: 2,      // толщина цветной границы фракции в пикселях (для клетки 16×16; масштабируется вместе с клеткой)
-            factionBorderOpacity: 0.95,
-            factionFill: 0.1,      // лёгкая заливка земель фракции цветом фракции (0 — без заливки)
+            factionBorderOpacity: 0.75,
+            factionFill: 0.2,      // лёгкая заливка земель фракции цветом фракции (0 — без заливки)
             factionCoastBorder: true,  // граница фракции идёт и вдоль берега моря и озёр
-            factionRiverBorder: 'always', // вдоль берегов рек: 'always' — всегда (река в территорию не входит), 'boundary' — только если на том берегу другая территория
-            regionShoreBorder: true,   // граница региона идёт и вдоль берега моря, озёр и рек (реки в регионы не входят)
-            gridOpacity: 0.28,     // насколько заметна сетка клеток (0..1)
+            factionRiverBorder: 'boundary', // вдоль берегов рек: 'always' — всегда (река в территорию не входит), 'boundary' — только если на том берегу другая территория
+            regionShoreBorder: false,   // граница региона идёт и вдоль берега моря, озёр и рек (реки в регионы не входят)
+            gridOpacity: 0.08,     // насколько заметна сетка клеток (0..1)
             regionBorderSmoothing: 7, // радиус (в пикселях) сглаживания углов границ регионов: больше — круглее; 0 — не сглаживать
             layers: {},            // режим разработки: { relief: false, hills: false, ... } отключает слои (см. paint)
             spriteOutline: false,  // тёмный контур вокруг построек, руд и эфира (в стиле dark fantasy выключен)
@@ -371,8 +371,8 @@ class MapPainter {
             if (layers.settlements) this.paintSettlementGround();
         }
         if (layers.texture) this.paintTexture();
-        if (showBorders && layers.borders) this.paintRegionBorders();
         if (terrain && (layers.decorations || layers.relief)) this.paintScene();
+        if (showBorders && layers.borders) this.paintRegionBorders();
 
         if (terrain && this.mood === 'dark' && this.options.grade && layers.grading) this.applyGrading();
         this.cover = true;                              // светящиеся детали (окна, костры, эфир) — тоже над землёй
@@ -2580,7 +2580,7 @@ class MapPainter {
             }
             if (!border) continue;
 
-            const alpha = relief ? 0.6 - 0.5 * Math.min(1, relief[k] / 110) : 0.6; // в горах границы почти растворяются
+            const alpha = relief ? 0.5 - 0.4 * Math.min(1, relief[k] / 110) : 0.6; // в горах границы почти растворяются
             this.pixels[k] = mixPacked(this.pixels[k], color, alpha);
         }
     }
@@ -2808,7 +2808,7 @@ class MapPainter {
         const lines = new Int32Array(image.data.buffer);
         const base = this.pixels;
         const alpha = Math.round(255 * this.options.gridOpacity);
-        const light = (255 << 16 | 255 << 8 | 255) | (alpha << 24);   // RGBA в порядке байтов r, g, b, a (little-endian)
+        const light = (0 << 16 | 0 << 8 | 0) | (alpha << 24);   // RGBA в порядке байтов r, g, b, a (little-endian)
         const dark = alpha << 24;
 
         const covered = this.spriteMask;                         // сетка тоже идёт по земле: под деревьями и домами её не видно
