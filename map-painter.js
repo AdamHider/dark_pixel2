@@ -1859,73 +1859,6 @@ class MapPainter {
     }
 
     /* ============================================================
-       SECTION: DARK_PROPS
-       ============================================================ */
-
-    // Кости в сухих местах, вороны, развалины, виселицы — редко и поодиночке.
-    collectProps(items) {
-        const map = this.map;
-        const T = this.tileSize;
-
-        this.forEachTile((x, y) => {
-            const i = map.index(x, y);
-            if (map.terrain[i] !== Terrain.PLAIN || map.river[i] || map.resource[i] !== Resource.NONE || map.roadLevel[i] > 0) return;
-            if (map.shore[i] === Shore.BEACH) return;
-
-            const roll = hashUnit(x, y, 950 + this.seedSalt);
-            const cx = x * T + Math.round(hashUnit(x, y, 951) * (T - 2)) + 1;
-            const base = y * T + Math.round(hashUnit(x, y, 952) * (T - 4)) + 3;
-            const dry = [Biome.STEPPE, Biome.DESERT, Biome.TUNDRA, Biome.SAVANNA].includes(map.biome[i]);
-
-            if (dry && roll < 0.014) items.push({ y: base, x: cx, cover: true, draw: () => this.drawBones(cx, base) });
-            else if (!dry && roll < 0.006) items.push({ y: base, x: cx, cover: true, draw: () => this.drawCrow(cx, base) });
-            else if (roll > 0.994 && roll <= 0.9985) items.push({ y: base, x: cx, cover: true, draw: () => this.drawRuin(cx, base, x, y) });
-            else if (roll > 0.9985) items.push({ y: base, x: cx, cover: true, draw: () => this.drawGibbet(cx, base) });
-        });
-    }
-
-    drawBones(cx, base) {
-        const bone = this.colors.bone;
-        this.rect(cx - 2, base - 1, 5, 1, bone);
-        this.put(cx - 1, base - 2, bone);
-        this.put(cx + 1, base - 2, bone);
-        this.rect(cx + 3, base - 2, 2, 2, bone);          // череп
-        this.put(cx + 4, base - 2, this.colors.crow);      // глазница
-    }
-
-    drawCrow(cx, base) {
-        const dark = this.colors.crow;
-        this.rect(cx, base - 2, 3, 2, dark);
-        this.put(cx - 1, base - 2, dark);
-        this.put(cx + 1, base - 3, dark);
-        this.put(cx - 2, base - 2, this.colors.stoneMid);  // клюв
-    }
-
-    // Обломки каменной стены и колонна.
-    drawRuin(cx, base, tileX, tileY) {
-        const stone = this.moodize(this.colors.chapelStone);
-        const dark = shadePacked(stone, -0.25);
-        const width = this.px(8);
-        for (let dx = 0; dx < width; dx++) {
-            const height = 1 + Math.floor(hashUnit(tileX * 7 + dx, tileY, 953) * this.px(4));   // рваный верх стены
-            this.rect(cx - (width >> 1) + dx, base - height, 1, height, dx % 3 === 0 ? dark : stone);
-        }
-        this.rect(cx + (width >> 1), base - this.px(6), 2, this.px(6), stone);                   // колонна
-        this.rect(cx + (width >> 1), base - this.px(6), 1, this.px(6), shadePacked(stone, 0.15));
-        this.drawShadow(cx, base, width);
-    }
-
-    drawGibbet(cx, base) {
-        const wood = this.packed.trunk;
-        const height = this.px(10);
-        this.drawShadow(cx, base, this.px(4));
-        this.rect(cx, base - height, 1, height, wood);
-        this.rect(cx, base - height, this.px(5), 1, wood);
-        this.put(cx + this.px(4), base - height + 1, this.colors.stoneMid);                       // верёвка
-        this.rect(cx + this.px(4) - 1, base - height + 2, 2, this.px(3), this.colors.crow);       // силуэт
-    }
-
-    /* ============================================================
        SECTION: ROADS
        ============================================================ */
 
@@ -3070,9 +3003,6 @@ class MapPainter {
                 case Resource.SETTLEMENT: this.collectSettlement(items, x, y, i); break;
             }
         });
-
-        if (this.mood === 'dark' && this.options.props) this.collectProps(items);
-
         items.sort((a, b) => a.y - b.y || a.x - b.x);
         return items;
     }
