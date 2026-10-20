@@ -1046,7 +1046,7 @@ class MapPainter {
             const threshold = BAYER[(gy & 3) * 4 + (gx & 3)];
             const mark = kind[k];
             if (mark >= 20) { if (threshold < 0.4) pixels[k] = mixPacked(pixels[k], WHITE, 0.16); }
-            else if (threshold < 0.85) pixels[k] = mixPacked(pixels[k], WHITE, mark === 10 + Shore.BEACH ? 0.45 : 0.3);
+            else if (threshold < 0.85) pixels[k] = mixPacked(pixels[k], WHITE, mark === 10 + Shore.BEACH ? 0 : 0);
         }
 
         this.paintCliffs(queue, distance, kind);
@@ -1430,7 +1430,7 @@ class MapPainter {
             const color = riverColor(tileOf(k));
             const deep = d === 1 && ((xx > 0 && mask[k - 1] > 0 && distance[k - 1] !== 1) || (xx < W - 1 && mask[k + 1] > 0 && distance[k + 1] !== 1)
                 || (yy > 0 && mask[k - W] > 0 && distance[k - W] !== 1) || (yy < W - 1 && mask[k + W] > 0 && distance[k + W] !== 1));
-            pixels[k] = deep ? mixPacked(color, WHITE, 0.2) : color;
+            pixels[k] = deep ? mixPacked(color, WHITE, 0) : color;
         }
 
         // Берег: первый пиксель суши — ровная тёмная линия, второй — редкая галька или песок на пляжных и каменистых берегах.
