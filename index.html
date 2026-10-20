@@ -3,77 +3,525 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Генератор карты</title>
+<meta name="color-scheme" content="dark">
+<title>Тёмные земли — генератор карты</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Pixelify+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
 <style>
-    :root { --bg: #f1eee6; --fg: #232a2e; --muted: #66706f; --panel: #e2ddd0; --accent: #a8641c; --accent-fg: #fff; }
-    @media (prefers-color-scheme: dark) {
-        :root { --bg: #141b21; --fg: #dde4dc; --muted: #8b9997; --panel: #202b33; --accent: #e0b354; --accent-fg: #1a1408; }
-    }
-    [hidden] { display: none !important; }
-    body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 "Trebuchet MS", Verdana, sans-serif; }
-    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
-    h1 { font: 700 22px/1.2 Georgia, "Times New Roman", serif; margin: 0 0 12px; }
-    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-    button, input[type=number] { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid transparent; border-radius: 4px; padding: 6px 12px; }
-    button { cursor: pointer; }
-    button[aria-pressed=true], button.primary { background: var(--accent); color: var(--accent-fg); }
-    input[type=number] { width: 110px; }
-    input#auto-interval { width: 64px; }
-    label { color: var(--muted); display: flex; gap: 6px; align-items: center; }
-    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    .turnbar { background: var(--panel); border-radius: 4px; padding: 8px 12px; }
-    #turn-status { font-weight: 700; min-width: 17em; }
-    #map { display: block; width: 100%; height: 70vh; cursor: grab; touch-action: none; background: #0f1418; }
-    #map.dragging { cursor: grabbing; }
-    #info, .hint { margin: 8px 0 0; color: var(--muted); }
-    #info { min-height: 3em; }
-    .selection { white-space: pre-line; background: var(--panel); border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
-    #owner-controls { margin: 8px 0 0; }
-    #factions { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 8px; margin-top: 8px; }
-    .faction { background: var(--panel); border-radius: 4px; padding: 8px 12px; }
-    .faction h2 { font: 700 16px/1.3 Georgia, "Times New Roman", serif; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
-    .faction p { margin: 2px 0; color: var(--muted); }
-    .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(0, 0, 0, .35); }
+/* ============================================================
+   ПЕРЕМЕННЫЕ И ОСНОВА
+   Тёмная палитра «мрачного фэнтези»: уголь, камень, бронза, кровь.
+   ============================================================ */
+:root {
+    --void: #07090c;              /* фон за игровым полем */
+    --panel: #171c22;             /* панели */
+    --panel-2: #1f262e;           /* панели второго уровня */
+    --panel-3: #262f38;           /* наведение на панель */
+    --edge: #3b4753;              /* светлая кромка камня */
+    --edge-dark: #0b0e12;         /* тёмная кромка камня */
+    --ink: #d8cfb8;               /* пергамент: основной текст */
+    --ink-dim: #8b8574;           /* приглушённый текст */
+    --gold: #d9a441;              /* бронза / акцент */
+    --gold-dim: #8a6a2c;
+    --gold-glow: rgba(217, 164, 65, .35);
+    --blood: #a3352a;             /* кровь / опасность */
+    --moss: #6f8a4a;              /* мох / природа */
+    --ether: #9b6dd6;             /* эфир */
+    --font-pixel: 'Press Start 2P', 'Courier New', monospace;
+    --font-text: 'Pixelify Sans', 'Trebuchet MS', Verdana, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+html, body { height: 100%; }
+
+body {
+    margin: 0;
+    background:
+        radial-gradient(120% 90% at 50% -10%, #12181f 0%, #0a0e13 45%, var(--void) 100%);
+    color: var(--ink);
+    font: 16px/1.5 var(--font-text);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+}
+
+/* ============================================================
+   РАМКИ: «камень + бронза». Уголки рисуются тенями, поэтому
+   работают на любом размере блока.
+   ============================================================ */
+.frame {
+    position: relative;
+    background:
+        linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 2px solid var(--edge-dark);
+    box-shadow:
+        inset 0 0 0 2px #2b333c,
+        inset 0 0 0 4px #141a20,
+        inset 0 1px 0 0 #46535f,
+        inset 0 -2px 0 0 #05070a,
+        0 0 0 1px var(--edge-dark),
+        0 6px 22px rgba(0, 0, 0, .6);
+}
+.frame::before,
+.frame::after {
+    content: '';
+    position: absolute;
+    width: 9px; height: 9px;
+    pointer-events: none;
+    border: 2px solid var(--gold-dim);
+    opacity: .8;
+}
+.frame::before { top: 3px; left: 3px; border-right: 0; border-bottom: 0; }
+.frame::after { bottom: 3px; right: 3px; border-left: 0; border-top: 0; }
+
+/* Заголовок панели */
+.panel-title {
+    margin: 0;
+    font: 10px/1.4 var(--font-pixel);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--gold);
+    text-shadow: 0 2px 0 #000;
+}
+
+/* ============================================================
+   ОБЩИЕ ЭЛЕМЕНТЫ УПРАВЛЕНИЯ
+   ============================================================ */
+button, input, select { font-family: var(--font-text); color: var(--ink); }
+
+button {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: .01em;
+    background: linear-gradient(180deg, #2f3a45, #1c232b);
+    border: 2px solid var(--edge-dark);
+    box-shadow: inset 0 1px 0 0 #4b5866, inset 0 -2px 0 0 #0a0d11, 0 2px 0 #05070a;
+    padding: 7px 12px;
+    cursor: pointer;
+    transition: background .12s, color .12s, transform .04s;
+    text-shadow: 0 1px 0 #000;
+}
+button:hover { background: linear-gradient(180deg, #3a4653, #232c35); }
+button:active { transform: translateY(1px); box-shadow: inset 0 1px 0 0 #4b5866, inset 0 -2px 0 0 #0a0d11; }
+button[aria-pressed=true] {
+    background: linear-gradient(180deg, var(--gold), var(--gold-dim));
+    color: #1a1206;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, .35);
+    box-shadow: inset 0 1px 0 0 #ffe6a8, inset 0 -2px 0 0 #5c4415, 0 0 14px var(--gold-glow);
+}
+button.primary {
+    background: linear-gradient(180deg, #b8442f, var(--blood));
+    color: #ffe9e2;
+    border-color: #2a0b07;
+    box-shadow: inset 0 1px 0 0 #e07a62, inset 0 -2px 0 0 #4d150e, 0 2px 0 #1a0604;
+}
+button.primary:hover { background: linear-gradient(180deg, #c9503a, #b03a2d); }
+button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--gold);
+    outline-offset: 2px;
+}
+
+input[type=number] {
+    width: 104px;
+    font-size: 15px;
+    background: #0c1014;
+    border: 2px solid var(--edge-dark);
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .8);
+    padding: 6px 8px;
+    color: var(--gold);
+    font-weight: 600;
+}
+input#auto-interval { width: 62px; }
+
+/* Флажок в стиле «камня» */
+input[type=checkbox] {
+    appearance: none;
+    width: 17px; height: 17px;
+    background: #0c1014;
+    border: 2px solid var(--edge-dark);
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, .8);
+    display: grid;
+    place-content: center;
+    cursor: pointer;
+    flex: none;
+}
+input[type=checkbox]::after {
+    content: '';
+    width: 8px; height: 8px;
+    background: var(--gold);
+    box-shadow: 0 0 8px var(--gold-glow);
+    transform: scale(0);
+    transition: transform .1s;
+}
+input[type=checkbox]:checked::after { transform: scale(1); }
+
+label {
+    color: var(--ink-dim);
+    display: inline-flex;
+    gap: 7px;
+    align-items: center;
+    font-size: 14px;
+    cursor: pointer;
+    user-select: none;
+}
+
+/* Тонкий скроллбар в тон панели */
+.scroll { scrollbar-width: thin; scrollbar-color: var(--gold-dim) transparent; }
+.scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+.scroll::-webkit-scrollbar-track { background: #0b0e12; }
+.scroll::-webkit-scrollbar-thumb { background: #3a4550; border: 2px solid #0b0e12; }
+.scroll::-webkit-scrollbar-thumb:hover { background: var(--gold-dim); }
+
+/* ============================================================
+   КАРКАС ИГРЫ: слева инструменты, справа хроника
+   ============================================================ */
+.game {
+    display: grid;
+    grid-template-columns: 268px 1fr 330px;
+    grid-template-rows: auto 1fr;
+    gap: 14px;
+    height: 100vh;
+    padding: 14px;
+}
+
+.column {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--gold-dim) transparent;
+}
+
+/* ============================================================
+   ВЕРХНЯЯ ПАНЕЛЬ (ход, сезон, год)
+   ============================================================ */
+.topbar {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 10px 16px;
+}
+.brand { display: flex; align-items: baseline; gap: 12px; }
+.brand h1 {
+    margin: 0;
+    font: 14px/1.3 var(--font-pixel);
+    color: var(--gold);
+    text-shadow: 0 0 18px var(--gold-glow), 0 2px 0 #000;
+    letter-spacing: .02em;
+}
+.brand .subtitle {
+    font-size: 13px;
+    color: var(--ink-dim);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+}
+.topbar .spacer { flex: 1; }
+.clock { display: flex; gap: 10px; align-items: stretch; }
+.clock .chip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 92px;
+    padding: 5px 12px;
+    background: #0c1014;
+    border: 2px solid var(--edge-dark);
+    box-shadow: inset 0 2px 6px rgba(0, 0, 0, .75);
+}
+.clock .chip .k {
+    font: 8px/1.4 var(--font-pixel);
+    color: var(--ink-dim);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+}
+.clock .chip .v {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--gold);
+    text-shadow: 0 0 10px var(--gold-glow);
+}
+
+/* Скрытая строка состояния (в неё пишет main.js): обычно скрыта,
+   показывается только при ошибке расчёта хода. */
+#turn-status {
+    position: absolute;
+    right: 18px;
+    bottom: -6px;
+    font-size: 13px;
+    color: #ffb4a6;
+}
+#turn-status:not([hidden]) {
+    padding: 4px 10px;
+    background: rgba(60, 14, 10, .95);
+    border: 2px solid #5c1a12;
+    box-shadow: 0 0 18px rgba(163, 53, 42, .5);
+}
+
+/* ============================================================
+   ПАНЕЛИ
+   ============================================================ */
+.panel { padding: 12px; }
+.panel > .panel-title { margin-bottom: 10px; }
+
+.group { display: flex; flex-wrap: wrap; gap: 7px; }
+.group + .group { margin-top: 10px; }
+.group .label {
+    flex-basis: 100%;
+    font: 8px/1.4 var(--font-pixel);
+    color: var(--ink-dim);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    margin-bottom: 1px;
+}
+.group .grow { flex: 1; }
+.row { display: flex; gap: 7px; align-items: center; }
+.row + .row { margin-top: 8px; }
+.hr { height: 2px; margin: 12px 0; background: linear-gradient(90deg, transparent, #3a4550 20%, #3a4550 80%, transparent); }
+
+/* ============================================================
+   ИГРОВОЕ ПОЛЕ (карта)
+   ============================================================ */
+.board {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    padding: 10px;
+}
+.board .viewport {
+    position: relative;
+    width: 100%; height: 100%;
+    border: 2px solid var(--edge-dark);
+    box-shadow: inset 0 0 40px rgba(0, 0, 0, .85), inset 0 0 0 1px #2b333c;
+    background: #0a0d11;
+    overflow: hidden;
+}
+#map {
+    display: block;
+    width: 100%; height: 100%;
+    cursor: grab;
+    touch-action: none;
+    background: #0a0d11;
+    image-rendering: pixelated;
+}
+#map.dragging { cursor: grabbing; }
+
+/* Подсказка-легенда поверх карты */
+.legend {
+    position: absolute;
+    left: 10px; bottom: 10px;
+    right: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    padding: 6px 10px;
+    font-size: 13px;
+    color: var(--ink-dim);
+    background: rgba(9, 12, 16, .82);
+    border: 1px solid #2b333c;
+    backdrop-filter: blur(2px);
+    pointer-events: none;
+}
+.legend b { color: var(--gold); font-weight: 600; }
+
+/* ============================================================
+   ИНФОРМАЦИЯ О КЛЕТКЕ И РЕГИОНЕ
+   ============================================================ */
+#info {
+    min-height: 2.6em;
+    font-size: 14px;
+    color: var(--ink);
+}
+#info:empty::before {
+    content: 'Наведите курсор на клетку карты — здесь появятся её свойства.';
+    color: var(--ink-dim);
+}
+.selection {
+    margin-top: 8px;
+    padding: 10px;
+    background: #0c1014;
+    border: 2px solid var(--edge-dark);
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, .7);
+    white-space: pre-line;
+    font-size: 14px;
+}
+.selection::before {
+    content: 'ВЫБРАНО';
+    display: block;
+    margin-bottom: 6px;
+    font: 8px/1.4 var(--font-pixel);
+    color: var(--gold);
+    letter-spacing: .12em;
+}
+#owner-controls { margin-top: 8px; }
+
+/* ============================================================
+   ФРАКЦИИ
+   ============================================================ */
+#factions { display: flex; flex-direction: column; gap: 10px; }
+.faction {
+    padding: 10px;
+    background: linear-gradient(180deg, #1b2229, #141a20);
+    border: 2px solid var(--edge-dark);
+    box-shadow: inset 0 1px 0 0 #3a4550;
+}
+.faction h2 {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin: 0 0 7px;
+    font: 11px/1.4 var(--font-pixel);
+    color: var(--ink);
+    text-shadow: 0 2px 0 #000;
+}
+.faction p { margin: 3px 0; font-size: 14px; color: var(--ink-dim); }
+.faction p b { color: var(--ink); font-weight: 600; }
+.swatch {
+    width: 15px; height: 15px;
+    flex: none;
+    border: 2px solid var(--edge-dark);
+    box-shadow: 0 0 10px currentColor;
+    background: currentColor;
+}
+.faction button { margin-top: 8px; font-size: 13px; padding: 5px 10px; }
+
+/* ============================================================
+   УЗКИЕ ЭКРАНЫ
+   ============================================================ */
+@media (max-width: 1180px) {
+    body { overflow: auto; }
+    .game { grid-template-columns: 1fr; height: auto; min-height: 100vh; }
+    .board { height: 62vh; }
+    .column { min-height: 0; }
+}
 </style>
 </head>
 <body>
-<main>
-    <h1>Генератор карты</h1>
-    <div class="controls">
-        <input id="seed" type="number" value="1" aria-label="Seed">
-        <button id="generate" class="primary">Новая карта</button>
-        <button data-view="terrain" aria-pressed="true">Рельеф</button>
-        <button data-view="temperature" aria-pressed="false">Температура</button>
-        <button data-view="regions" aria-pressed="false">Регионы</button>
-        <label><input type="checkbox" id="borders" checked>границы регионов</label>
-        <label><input type="checkbox" id="grid" checked>Сетка</label>
-        <label><input type="checkbox" id="factions-toggle" checked>Фракции</label>
-        <button id="fit">Вся карта</button>
-        <button id="demo-objects" aria-pressed="false">Объекты (пример)</button>
-    </div>
-    <div class="controls turnbar" role="group" aria-label="Ходы">
-        <span id="turn-status" aria-live="polite">Ход 0</span>
-        <button id="next-turn" class="primary">Следующий ход</button>
-        <button id="auto-turns" aria-pressed="false">Автоход</button>
-        <label>каждые <input id="auto-interval" type="number" value="2" min="0.2" step="0.2"> с</label>
-        <label><input type="checkbox" id="repaint-each-turn" checked>перерисовывать карту каждый ход (иначе — раз в сезон)</label>
-    </div>
-    <div class="controls" role="group" aria-label="Перейти к сезону">
-        <span>Перейти к сезону:</span>
-        <button data-season="spring" aria-pressed="true">Весна</button>
-        <button data-season="summer" aria-pressed="false">Лето</button>
-        <button data-season="autumn" aria-pressed="false">Осень</button>
-        <button data-season="winter" aria-pressed="false">Зима</button>
-        <button id="mood" aria-pressed="true">Тёмный стиль</button>
-        <button id="settlements" aria-pressed="true">Поселения</button>
-    </div>
-    <canvas id="map" tabindex="0" aria-label="Карта мира"></canvas>
-    <p class="hint">Перетаскивайте карту мышью, колесо — зум. С клавиатуры (когда карта в фокусе): стрелки или WASD — движение, +/− — зум. Клик — выделить клетку и её регион (Esc — снять выделение). Сезоны меняются ходами: кнопки сезонов прокручивают ходы до начала сезона.</p>
-    <p id="info"></p>
-    <div id="selection" class="selection" hidden></div>
-    <div id="owner-controls" class="controls" hidden></div>
-    <section id="factions" aria-label="Фракции" hidden></section>
-</main>
+
+<div class="game">
+
+    <!-- ===================== ВЕРХНЯЯ ПАНЕЛЬ ===================== -->
+    <header class="topbar frame">
+        <div class="brand">
+            <h1>ТЁМНЫЕ ЗЕМЛИ</h1>
+            <span class="subtitle">генератор мира</span>
+        </div>
+
+        <div class="spacer"></div>
+
+        <div class="clock" role="group" aria-label="Время игры">
+            <div class="chip"><span class="k">Ход</span><span class="v" id="chip-turn">0</span></div>
+            <div class="chip"><span class="k">Сезон</span><span class="v" id="chip-season">Лето</span></div>
+            <div class="chip"><span class="k">Год</span><span class="v" id="chip-year">1</span></div>
+        </div>
+
+        <div class="row" style="margin: 0 0 0 4px">
+            <button id="next-turn" class="primary">Следующий ход ▸</button>
+            <button id="auto-turns" aria-pressed="false">Автоход</button>
+        </div>
+
+        <!-- Скрытая строка состояния: в неё пишет main.js (полная подпись хода) -->
+        <span id="turn-status" hidden aria-live="polite">Ход 0</span>
+    </header>
+
+    <!-- ===================== ЛЕВАЯ КОЛОНКА: ИНСТРУМЕНТЫ ===================== -->
+    <aside class="column">
+
+        <section class="panel frame">
+            <h2 class="panel-title">Мир</h2>
+            <div class="group">
+                <span class="label">Семя мира</span>
+                <input id="seed" type="number" value="1" aria-label="Семя мира">
+                <button id="generate" class="primary grow">Новая карта</button>
+            </div>
+        </section>
+
+        <section class="panel frame">
+            <h2 class="panel-title">Отображение</h2>
+            <div class="group" role="group" aria-label="Слой карты">
+                <span class="label">Слой</span>
+                <button data-view="terrain" aria-pressed="true">Рельеф</button>
+                <button data-view="temperature" aria-pressed="false">Температура</button>
+                <button data-view="regions" aria-pressed="false">Регионы</button>
+            </div>
+            <div class="hr"></div>
+            <div class="group">
+                <span class="label">Наложения</span>
+                <label><input type="checkbox" id="borders" checked>границы регионов</label>
+                <label><input type="checkbox" id="grid" checked>сетка</label>
+                <label><input type="checkbox" id="factions-toggle" checked>фракции</label>
+            </div>
+            <div class="hr"></div>
+            <div class="group">
+                <span class="label">Стиль</span>
+                <button id="mood" aria-pressed="true">Тёмный стиль</button>
+                <button id="settlements" aria-pressed="true">Поселения</button>
+                <button id="demo-objects" aria-pressed="false">Объекты</button>
+            </div>
+            <div class="row">
+                <button id="fit" class="grow">Вся карта</button>
+            </div>
+        </section>
+
+        <section class="panel frame">
+            <h2 class="panel-title">Время</h2>
+            <div class="group" role="group" aria-label="Перейти к сезону">
+                <span class="label">Перейти к сезону</span>
+                <button data-season="spring" aria-pressed="false">Весна</button>
+                <button data-season="summer" aria-pressed="true">Лето</button>
+                <button data-season="autumn" aria-pressed="false">Осень</button>
+                <button data-season="winter" aria-pressed="false">Зима</button>
+            </div>
+            <div class="hr"></div>
+            <div class="row">
+                <label>Автоход каждые <input id="auto-interval" type="number" value="2" min="0.2" step="0.2"> с</label>
+            </div>
+            <div class="row">
+                <label><input type="checkbox" id="repaint-each-turn" checked>перерисовывать карту каждый ход</label>
+            </div>
+        </section>
+
+    </aside>
+
+    <!-- ===================== ЦЕНТР: КАРТА ===================== -->
+    <main class="board frame">
+        <div class="viewport">
+            <canvas id="map" tabindex="0" aria-label="Карта мира"></canvas>
+            <div class="legend">
+                <span><b>Мышь</b> — тянуть карту</span>
+                <span><b>Колесо</b> — зум</span>
+                <span><b>WASD</b> / стрелки — движение</span>
+                <span><b>Клик</b> — выбрать клетку</span>
+                <span><b>Esc</b> — снять выбор</span>
+            </div>
+        </div>
+    </main>
+
+    <!-- ===================== ПРАВАЯ КОЛОНКА: ХРОНИКА ===================== -->
+    <aside class="column">
+
+        <section class="panel frame">
+            <h2 class="panel-title">Под курсором</h2>
+            <p id="info"></p>
+            <div id="selection" class="selection" hidden></div>
+            <div id="owner-controls" class="group" hidden></div>
+        </section>
+
+        <section class="panel frame" id="factions-panel" hidden>
+            <h2 class="panel-title">Фракции</h2>
+            <div id="factions" aria-label="Фракции"></div>
+        </section>
+
+    </aside>
+
+</div>
 
 <script src="map-generator.js"></script>
 <script src="seasons.js"></script>

@@ -1,4 +1,5 @@
 /* ============================================================
+   SECTION: MAIN
    Точка входа: создаём карту, рендерер и менеджеры, подключаем кнопки.
    Все параметры генерации можно переопределить здесь (полный список — MapGenerator.DEFAULTS).
 
@@ -26,7 +27,10 @@ const canvas = document.getElementById('map');
 const renderer = new MapRenderer(canvas, generator);
 const info = document.getElementById('info');
 
-/* ---------- Менеджеры ---------- */
+/* ============================================================
+   SECTION: MANAGERS
+   Менеджеры.
+   ============================================================ */
 
 const TURNS_PER_SEASON = 3;                         // сколько ходов длится сезон
 const START_FACTIONS = [                            // стартовые фракции: regions — сколько регионов (число или [мин, макс])
@@ -51,7 +55,10 @@ function connectManagers() {
     });
 }
 
-/* ---------- Подписи для интерфейса ---------- */
+/* ============================================================
+   SECTION: NAMES
+   Подписи для интерфейса.
+   ============================================================ */
 
 const TERRAIN_NAMES = ['глубокая вода', 'мелководье', 'равнина', 'гора'];
 const BIOME_NAMES = ['тундра', 'тайга', 'равнина', 'степь', 'пустыня', 'саванна'];
@@ -93,15 +100,24 @@ function showStats() {
     info.textContent = `Суша: ${landPercent}% · регионов: ${regions} · в среднем ${average} кв. Наведите на квадрат.`;
 }
 
-/* ---------- Ход ---------- */
+/* ============================================================
+   SECTION: TURNS
+   Ход.
+   ============================================================ */
 
 const turnStatus = document.getElementById('turn-status');
+const chipTurn = document.getElementById('chip-turn');
+const chipSeason = document.getElementById('chip-season');
+const chipYear = document.getElementById('chip-year');
 const seasonButtons = document.querySelectorAll('[data-season]');
 
 function refreshTurnStatus() {
     const now = turns.calendar();
     const season = SEASONS[now.season] ? SEASONS[now.season].name : now.season;
     turnStatus.textContent = `Ход ${now.turn} · ${season} (ход сезона ${now.turnInSeason + 1}/${TURNS_PER_SEASON}) · год ${now.year + 1}`;
+    chipTurn.textContent = now.turn;
+    chipSeason.textContent = season;
+    chipYear.textContent = now.year + 1;
     seasonButtons.forEach(button => button.setAttribute('aria-pressed', button.dataset.season === now.season));
 }
 
@@ -116,8 +132,10 @@ function onTurnDone() {
 function playTurns(count) {
     try {
         turns.advance(count);
+        turnStatus.hidden = true;
     } catch (error) {
         stopAutoTurns();
+        turnStatus.hidden = false;
         turnStatus.textContent = `Ошибка при расчёте хода: ${error.message}`;
         console.error(error);
     }
@@ -169,7 +187,10 @@ document.getElementById('repaint-each-turn').addEventListener('change', e => {
     renderer.options.autoRepaint = e.target.checked ? true : 'season';
 });
 
-/* ---------- Действия ---------- */
+/* ============================================================
+   SECTION: ACTIONS
+   Действия.
+   ============================================================ */
 
 const seedInput = document.getElementById('seed');
 
@@ -198,9 +219,13 @@ renderer.onHover = tile => {
     if (tile) info.textContent = describeTile(tile);
 };
 
-/* ---------- Панель фракций ---------- */
+/* ============================================================
+   SECTION: FACTIONS
+   Панель фракций.
+   ============================================================ */
 
 const factionPanel = document.getElementById('factions');
+const factionPanelBox = document.getElementById('factions-panel');
 
 function addText(parent, tag, text, className) {
     const element = document.createElement(tag);
@@ -220,10 +245,10 @@ function numbersLine(values, names, { signed = false } = {}) {
 function refreshFactionPanel() {
     factionPanel.replaceChildren();
     if (!factions || generator.factions.length === 0) {
-        factionPanel.hidden = true;
+        factionPanelBox.hidden = true;
         return;
     }
-    factionPanel.hidden = false;
+    factionPanelBox.hidden = false;
 
     for (const faction of generator.factions) {
         const summary = factions.getFactionInfo(faction.id);
@@ -261,7 +286,10 @@ function refreshFactionPanel() {
     }
 }
 
-/* ---------- Выделение по клику ---------- */
+/* ============================================================
+   SECTION: SELECTION
+   Выделение по клику.
+   ============================================================ */
 
 const selectionPanel = document.getElementById('selection');
 const ownerControls = document.getElementById('owner-controls');
@@ -326,7 +354,10 @@ function refreshSelection() {
     showSelection(tile, tile && tile.regionId >= 0 ? generator.getRegionInfo(tile.regionId) : null);
 }
 
-/* ---------- Кнопки ---------- */
+/* ============================================================
+   SECTION: BUTTONS
+   Кнопки.
+   ============================================================ */
 
 document.getElementById('generate').addEventListener('click', () => {
     seedInput.value = Math.floor(Math.random() * 99999);
@@ -341,7 +372,10 @@ document.getElementById('factions-toggle').addEventListener('change', e => rende
 
 document.getElementById('fit').addEventListener('click', () => renderer.fitToView());
 
-/* ---------- Пример объектов на карте ---------- */
+/* ============================================================
+   SECTION: DEMO_OBJECTS
+   Пример объектов на карте.
+   ============================================================ */
 
 // Кнопка ставит на карту деревню, город и армию — просто чтобы показать, как это работает.
 // Своё: renderer.setObjects([{ id, config, tile: [x, y], options }]) — формат конфигов описан в sprite-renderer.js.

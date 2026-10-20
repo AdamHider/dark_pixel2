@@ -626,8 +626,8 @@ createNoiseLayers → allocateLayers
 | `PIXEL_BUFFER` | класс `PixelBuffer` |
 | `MAP_PAINTER` | класс `MapPainter` целиком |
 | `PAINT` | `paint()` — порядок слоёв |
-| `HELPERS` | `px`, `tileOfPixel`, `forEachTile`, `seasonalTemperature`, `put`, `blend`, `rect`, `linePoints` |
-| `BACKGROUND` | `paintBase`, `blendGrid`, `blendChoices`, `buildAxisTables`, `isUniform`, `smoothCoast`, `buildTileColors`, `tileColor`, `waterColor`, `groundColor`, `snowCoverage`, `nearRiver`, `fertilityTint`, `shadeStep` |
+| `HELPERS` | `px`, `forEachTile`, `seasonalTemperature`, `put`, `blend`, `rect`, `linePoints` |
+| `BACKGROUND` | `paintBase`, `blendGrid`, `blendChoices`, `buildAxisTables`, `isUniform`, `smoothCoast`, `buildTileColors`, `isRiverTileInRegionsView`, `tileColor`, `waterColor`, `groundColor`, `snowCoverage`, `nearRiver`, `fertilityTint`, `shadeStep` |
 | `HILLS` | `paintHills`, `buildHillHeights` |
 | `SHORES` | `paintShores`, `paintCliffs` |
 | `MOUNTAIN_RELIEF` | `buildReliefHeights`, `blurHeights`, `prepareReliefRows`, `paintReliefRow`, `fillColumn`, `blurMountainHeights`, `mountainFootprint`, `tilesNearRelief`, `snowLevel` |
@@ -636,7 +636,7 @@ createNoiseLayers → allocateLayers
 | `DARK_STYLE` | `moodize`, `applyGrading`, `buildFog`, `drawLight` |
 | `DARK_PROPS` | `collectProps`, `drawBones`, `drawCrow`, `drawRuin`, `drawGibbet` |
 | `ROADS` | `roadWidth`, `paintRoads`, `buildRoadGeometry` |
-| `SETTLEMENTS` | `settlementLayout`, `layoutSettlement`, `paintSettlementGround`, `settlementGround`, `collectSettlement`, `houseColor`, `houseSprite`, `drawHouse`, `drawBuildingShadow`, `blitSprite` |
+| `SETTLEMENTS` | `settlementLayout`, `layoutSettlement`, `tryPlace`, `paintSettlementGround`, `settlementGround`, `collectSettlement`, `houseColor`, `houseSprite`, `drawHouse`, `drawBuildingShadow`, `blitSprite` |
 | `ORE` | `oreSprite`, `drawOreTile` |
 | `ETHER` | `etherSprite`, `drawEther` |
 | `REGION_BORDERS` | `buildPixelRegions`, `computePixelRegions`, `smoothPixelRegions`, `paintRegionBorders` |
@@ -648,12 +648,12 @@ createNoiseLayers → allocateLayers
 
 | Файл | Секции |
 |---|---|
-| `seasons.js` | `SEASONS` (палитры), `DARK_SEASONS` (тёмный стиль) |
+| `seasons.js` | `SEASONS` (палитры + `SEASON_ORDER`), `DARK_SEASONS` (тёмный стиль, `toneHex`, `DARK_TONES`, `DARK_EXTRA`) |
 | `map-renderer.js` | `MAP_RENDERER`, `PUBLIC`, `FACTIONS`, `OBJECTS`, `CAMERA`, `SELECTION`, `RENDER`, `INPUT` |
 | `faction-manager.js` | `FACTION_MANAGER`, `STATE`, `CONTROL`, `READ`, `START_FACTIONS` |
 | `economy-manager.js` | `ECONOMY_MANAGER`, `STATE`, `STEP`, `READ`, `SAVE`, `PLACEHOLDER` |
 | `turn-manager.js` | `TURN_MANAGER`, `CALENDAR`, `PHASES`, `TURN`, `SAVE` |
-| `main.js` | `MAIN`, `NAMES`, `ACTIONS`, `SELECTION`, `BUTTONS`, `DEMO_OBJECTS` |
+| `main.js` | `MAIN`, `MANAGERS`, `NAMES`, `TURNS`, `ACTIONS`, `FACTIONS`, `SELECTION`, `BUTTONS`, `DEMO_OBJECTS` |
 | `sprite-renderer.js` | `SPRITE_RENDERER`, `CONFIG`, `COLORS`, `LAYERS`, `OUTPUT` |
 | `sprite-examples.js` | `SPRITE_EXAMPLES` |
 
