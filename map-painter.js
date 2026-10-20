@@ -13,9 +13,7 @@
    Спрайты рассчитаны на 12 пикселей: функция px(n) переводит «пиксели для клетки 12×12» в текущий размер.
    ============================================================ */
 
-/* ============================================================
-   SECTION: MAP_COLORS
-   ============================================================ */
+/* ---------- Цвета, не зависящие от сезона (в виде hex) ---------- */
 const COLORS = {
     bridgeDeck: '#a39e92',
     bridgeEdge: '#6e6a62',
@@ -54,9 +52,7 @@ const COLORS = {
     crow: '#16161a'
 };
 
-/* ============================================================
-   SECTION: MAP_PACKED_COLORS
-   ============================================================ */
+/* ---------- Цвета в виде одного числа (так пиксели быстро записываются в ImageData) ---------- */
 const packRgb = (r, g, b) => 0xFF000000 | (b << 16) | (g << 8) | r; // знаковое 32-битное число, как в Int32Array
 const hexToPacked = hex => packRgb(parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16));
 const WHITE = packRgb(255, 255, 255);
@@ -109,7 +105,6 @@ const MOUNTAIN_RAMP = Object.freeze(['#463f50', '#554e5b', '#6c677c', '#877466',
 const packPalette = palette => ({
     biome: palette.biome.map(hexToPacked),
     waterShades: palette.water.map(hexToPacked),
-    riverShades: palette.river.map(hexToPacked),
     ice: palette.ice.map(hexToPacked),
     rock: hexToPacked(palette.rock),
     snow: hexToPacked(palette.snow),
@@ -117,9 +112,7 @@ const packPalette = palette => ({
     trunk: hexToPacked(palette.trunk)
 });
 
-/* ============================================================
-   SECTION: MAP_CONSTANTS
-   ============================================================ */
+/* ---------- Константы ---------- */
 
 // Температуры (с учётом сезона), при которых выпадает снег и замерзает вода.
 const SNOW_TEMPERATURE = 0.30;       // холоднее — на земле лежит снег
@@ -140,9 +133,7 @@ function waterShadeIndex(depth) {
 const STEP_AMOUNTS = Int32Array.from([-30, -15, 0, 15, 28]); // ступени светотени холмов, в долях от 256
 const BAYER = Float32Array.from([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5], v => (v + 0.5) / 16);
 
-/* ============================================================
-   SECTION: MAP_HASH_NOISE
-   ============================================================ */
+/* ---------- Детерминированные «случайности»: не меняются при перерисовке ---------- */
 // Хеш с хорошим перемешиванием битов: простые формулы вида x*a ^ y*b дают заметные узоры (полосы, кирпичи).
 function tileHash(x, y, k) {
     let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(k, 1274126177)) | 0;
@@ -185,10 +176,6 @@ class LatticeNoise {
     }
 }
 
-/* ============================================================
-   SECTION: MAP_SHADING
-   Светотень холмов: считается один раз, потом только применяется.
-   ============================================================ */
 /* Светотень холмов не зависит от сезона, поэтому считается один раз: для каждого пикселя, который надо изменить,
    запоминаем индекс и «код» (ступень светотени + признак оврага). При каждой перерисовке остаётся только применить список.
    Горячий цикл вынесен в отдельную функцию с простыми аргументами: так движок JavaScript оптимизирует его
@@ -242,10 +229,6 @@ function applyHillShading(pixels, { index, code, count }) {
     }
 }
 
-/* ============================================================
-   SECTION: PIXEL_BUFFER
-   Маленький пиксельный буфер для спрайтов (дома, руды, эфир).
-   ============================================================ */
 /* Маленький пиксельный буфер для рисунков (дома, руды, эфир): прозрачный фон, рисование фигур, контур.
    Рисунок готовится один раз, а потом копируется на карту. */
 class PixelBuffer {
@@ -292,7 +275,6 @@ class PixelBuffer {
 }
 
 /* ============================================================
-   SECTION: MAP_PAINTER
    MapPainter
    ============================================================ */
 class MapPainter {
@@ -341,10 +323,7 @@ class MapPainter {
         for (const [name, hex] of Object.entries(COLORS)) this.colors[name] = hexToPacked(hex);
     }
 
-    /* ============================================================
-       SECTION: PAINT
-       Отрисовка карты: слои снизу вверх.
-       ============================================================ */
+    /* ---------- Главный метод ---------- */
 
     // view: 'terrain' | 'temperature' | 'regions'. Возвращает холст с готовой картой.
     paint({ view, seasonName, showBorders, mood }) {
@@ -391,8 +370,8 @@ class MapPainter {
             if (layers.settlements) this.paintSettlementGround();
         }
         if (layers.texture) this.paintTexture();
-        if (terrain && (layers.decorations || layers.relief)) this.paintScene();
         if (showBorders && layers.borders) this.paintRegionBorders();
+        if (terrain && (layers.decorations || layers.relief)) this.paintScene();
 
         if (terrain && this.mood === 'dark' && this.options.grade && layers.grading) this.applyGrading();
         this.cover = true;                              // светящиеся детали (окна, костры, эфир) — тоже над землёй
@@ -403,19 +382,11 @@ class MapPainter {
         return this.canvas;
     }
 
-    /* ============================================================
-       SECTION: HELPERS
-       ============================================================ */
+    /* ---------- Вспомогательные ---------- */
 
     // «Пиксели для клетки 12×12» -> пиксели текущей клетки.
     px(n) {
         return Math.round(n * this.tileSize / 12);
-    }
-
-    // Индекс клетки по индексу пикселя карты (обе версии записи дают одинаковый результат).
-    tileOfPixel(k) {
-        const T = this.tileSize, W = this.width;
-        return Math.floor(k / W / T) * this.map.size + Math.floor((k % W) / T);
     }
 
     forEachTile(callback) {
@@ -466,9 +437,7 @@ class MapPainter {
         return points;
     }
 
-    /* ============================================================
-       SECTION: BACKGROUND
-       ============================================================ */
+    /* ---------- 1. Фон ---------- */
 
     /* Сглаживание.
        Считаем, что цвет клетки «живёт» в её центре. Любой пиксель лежит внутри квадрата, углы которого — центры
@@ -810,9 +779,7 @@ class MapPainter {
         return shadeFast(color, STEP_AMOUNTS[step + 2]);
     }
 
-    /* ============================================================
-       SECTION: HILLS
-       ============================================================ */
+    /* ---------- 2. Холмы и овраги ---------- */
 
     /* На равнинах — лёгкая светотень «карты холмов» (свет слева сверху, как у гор и деревьев) плюс тёмные овраги
        в сухих местах. Карта холмов — шум плюс крупный рельеф суши из генератора; считается один раз на карту. */
@@ -892,9 +859,7 @@ class MapPainter {
         return height;
     }
 
-    /* ============================================================
-       SECTION: SHORES
-       ============================================================ */
+    /* ---------- 3. Берега ---------- */
 
     /* Тип берега задаёт генератор (map.shore). Расстояние от воды считаем в пикселях: волной от воды вглубь суши.
          пляж     — полоса мокрого, потом сухого песка; в воде у берега белая пена;
@@ -925,7 +890,7 @@ class MapPainter {
             if (k < W * W - W) around[n++] = k + W;
             return n;
         };
-        const tileOf = k => this.tileOfPixel(k);
+        const tileOf = k => Math.floor(k / W / T) * size + Math.floor((k % W) / T);
 
         // 1) семена: каждый пиксель суши прямо у воды. Тип берега задан для клеток, а сглаженная береговая линия заходит
         // в соседние клетки (в том числе в воду, у которой типа нет), поэтому тип берём у самой клетки пикселя, а если у неё
@@ -1045,7 +1010,7 @@ class MapPainter {
             const threshold = BAYER[(gy & 3) * 4 + (gx & 3)];
             const mark = kind[k];
             if (mark >= 20) { if (threshold < 0.4) pixels[k] = mixPacked(pixels[k], WHITE, 0.16); }
-            else if (threshold < 0.85) pixels[k] = mixPacked(pixels[k], WHITE, mark === 10 + Shore.BEACH ? 0 : 0.3);
+            else if (threshold < 0.85) pixels[k] = mixPacked(pixels[k], WHITE, mark === 10 + Shore.BEACH ? 0.45 : 0.3);
         }
 
         this.paintCliffs(queue, distance, kind);
@@ -1086,9 +1051,7 @@ class MapPainter {
         }
     }
 
-    /* ============================================================
-       SECTION: MOUNTAIN_RELIEF
-       ============================================================ */
+    /* ---------- 4. Рельеф гор ---------- */
 
     /* Горы — «карта высот», раскрашенная светотенью (свет слева сверху), а не спрайты. Высота клетки берётся из
        генератора, размывается по соседям и интерполируется до пикселя; к ней добавляются острые гребни (шум) и
@@ -1376,9 +1339,7 @@ class MapPainter {
         return 0.95 - fraction * 0.6;
     }
 
-    /* ============================================================
-       SECTION: RIVERS
-       ============================================================ */
+    /* ---------- 3. Реки ---------- */
 
     // Ширина реки в пикселях по её уровню (глубине).
     // Ширина реки в клетке по количеству воды: ручей — 2–3 пикселя, большая река у устья — до 14.
@@ -1410,7 +1371,7 @@ class MapPainter {
         const W = this.width;
         const size = this.map.size;
         const pixels = this.pixels;
-        const tileOf = k => this.tileOfPixel(k);
+        const tileOf = k => Math.floor(Math.floor(k / W) / T) * size + Math.floor((k % W) / T);
         const iceRiver = tile => this.seasonalTemperature(tile) < RIVER_ICE_TEMPERATURE;
         const bankColors = new Map();                              // тёмный цвет берега считаем один раз на каждый цвет земли
 
@@ -1427,7 +1388,7 @@ class MapPainter {
             const color = riverColor(tileOf(k));
             const deep = d === 1 && ((xx > 0 && mask[k - 1] > 0 && distance[k - 1] !== 1) || (xx < W - 1 && mask[k + 1] > 0 && distance[k + 1] !== 1)
                 || (yy > 0 && mask[k - W] > 0 && distance[k - W] !== 1) || (yy < W - 1 && mask[k + W] > 0 && distance[k + W] !== 1));
-            pixels[k] = deep ? mixPacked(color, WHITE, 0) : color;
+            pixels[k] = deep ? mixPacked(color, WHITE, 0.2) : color;
         }
 
         // Берег: первый пиксель суши — ровная тёмная линия, второй — редкая галька или песок на пляжных и каменистых берегах.
@@ -1645,9 +1606,7 @@ class MapPainter {
         else pixels[k] = hashUnit(xx, yy, 630) < 0.5 ? c.pebbleLight : c.pebbleDark;
     }
 
-    /* ============================================================
-       SECTION: TEXTURE
-       ============================================================ */
+    /* ---------- 4. Текстура ---------- */
 
     paintTexture() {
         const map = this.map;
@@ -1762,9 +1721,7 @@ class MapPainter {
         this.pixels[k] = color;
     }
 
-    /* ============================================================
-       SECTION: DARK_STYLE
-       ============================================================ */
+    /* ---------- Тёмный стиль: цветокоррекция, туман ---------- */
 
     // Приглушает цвет построек в тёмном стиле.
     moodize(color) {
@@ -1858,9 +1815,72 @@ class MapPainter {
         this.put(x, y, color);
     }
 
-    /* ============================================================
-       SECTION: ROADS
-       ============================================================ */
+    /* ---------- Мрачные детали (только в тёмном стиле) ---------- */
+
+    // Кости в сухих местах, вороны, развалины, виселицы — редко и поодиночке.
+    collectProps(items) {
+        const map = this.map;
+        const T = this.tileSize;
+
+        this.forEachTile((x, y) => {
+            const i = map.index(x, y);
+            if (map.terrain[i] !== Terrain.PLAIN || map.river[i] || map.resource[i] !== Resource.NONE || map.roadLevel[i] > 0) return;
+            if (map.shore[i] === Shore.BEACH) return;
+
+            const roll = hashUnit(x, y, 950 + this.seedSalt);
+            const cx = x * T + Math.round(hashUnit(x, y, 951) * (T - 2)) + 1;
+            const base = y * T + Math.round(hashUnit(x, y, 952) * (T - 4)) + 3;
+            const dry = [Biome.STEPPE, Biome.DESERT, Biome.TUNDRA, Biome.SAVANNA].includes(map.biome[i]);
+
+            if (dry && roll < 0.014) items.push({ y: base, x: cx, cover: true, draw: () => this.drawBones(cx, base) });
+            else if (!dry && roll < 0.006) items.push({ y: base, x: cx, cover: true, draw: () => this.drawCrow(cx, base) });
+            else if (roll > 0.994 && roll <= 0.9985) items.push({ y: base, x: cx, cover: true, draw: () => this.drawRuin(cx, base, x, y) });
+            else if (roll > 0.9985) items.push({ y: base, x: cx, cover: true, draw: () => this.drawGibbet(cx, base) });
+        });
+    }
+
+    drawBones(cx, base) {
+        const bone = this.colors.bone;
+        this.rect(cx - 2, base - 1, 5, 1, bone);
+        this.put(cx - 1, base - 2, bone);
+        this.put(cx + 1, base - 2, bone);
+        this.rect(cx + 3, base - 2, 2, 2, bone);          // череп
+        this.put(cx + 4, base - 2, this.colors.crow);      // глазница
+    }
+
+    drawCrow(cx, base) {
+        const dark = this.colors.crow;
+        this.rect(cx, base - 2, 3, 2, dark);
+        this.put(cx - 1, base - 2, dark);
+        this.put(cx + 1, base - 3, dark);
+        this.put(cx - 2, base - 2, this.colors.stoneMid);  // клюв
+    }
+
+    // Обломки каменной стены и колонна.
+    drawRuin(cx, base, tileX, tileY) {
+        const stone = this.moodize(this.colors.chapelStone);
+        const dark = shadePacked(stone, -0.25);
+        const width = this.px(8);
+        for (let dx = 0; dx < width; dx++) {
+            const height = 1 + Math.floor(hashUnit(tileX * 7 + dx, tileY, 953) * this.px(4));   // рваный верх стены
+            this.rect(cx - (width >> 1) + dx, base - height, 1, height, dx % 3 === 0 ? dark : stone);
+        }
+        this.rect(cx + (width >> 1), base - this.px(6), 2, this.px(6), stone);                   // колонна
+        this.rect(cx + (width >> 1), base - this.px(6), 1, this.px(6), shadePacked(stone, 0.15));
+        this.drawShadow(cx, base, width);
+    }
+
+    drawGibbet(cx, base) {
+        const wood = this.packed.trunk;
+        const height = this.px(10);
+        this.drawShadow(cx, base, this.px(4));
+        this.rect(cx, base - height, 1, height, wood);
+        this.rect(cx, base - height, this.px(5), 1, wood);
+        this.put(cx + this.px(4), base - height + 1, this.colors.stoneMid);                       // верёвка
+        this.rect(cx + this.px(4) - 1, base - height + 2, 2, this.px(3), this.colors.crow);       // силуэт
+    }
+
+    /* ---------- Дороги между поселениями ---------- */
 
     roadWidth(level) {
         return Math.max(1, this.px([2, 3, 4][Math.min(3, Math.max(1, level)) - 1]));
@@ -1881,7 +1901,7 @@ class MapPainter {
         const size = map.size;
         const T = this.tileSize;
         const pixels = this.pixels;
-        const tileOf = k => this.tileOfPixel(k);
+        const tileOf = k => Math.floor(Math.floor(k / W) / T) * size + Math.floor((k % W) / T);
 
         for (const k of geometry.halo) pixels[k] = mixPacked(pixels[k], dirt, 0.28);
         for (let n = 0; n < geometry.core.length; n++) {
@@ -1961,9 +1981,7 @@ class MapPainter {
         return this.roadCache;
     }
 
-    /* ============================================================
-       SECTION: SETTLEMENTS
-       ============================================================ */
+    /* ---------- Поселения ---------- */
 
     /* Поселение — ресурс клетки. Каждая клетка с поселением рисуется 1–4 домиками (число зависит от её уровня) и
        не выходит за свои границы (допуск settlementOverflow, по умолчанию 25%): так по рисунку всегда понятно, в какой
@@ -2245,9 +2263,7 @@ class MapPainter {
         }
     }
 
-    /* ============================================================
-       SECTION: ORE
-       ============================================================ */
+    /* ---------- Руды ---------- */
 
     // Каменный выступ с вкраплениями руды. kind: 'gold' (золото — яркое, с блёстками) или 'iron' (железо — тёмное, ржавое).
     oreSprite(kind, variant) {
@@ -2309,9 +2325,7 @@ class MapPainter {
         }
     }
 
-    /* ============================================================
-       SECTION: ETHER
-       ============================================================ */
+    /* ---------- Эфир: гигантские фиолетовые кристаллы и грибы ---------- */
 
     etherSprite(variant) {
         if (!this.spriteCache) this.spriteCache = new Map();
@@ -2379,9 +2393,7 @@ class MapPainter {
         this.drawLight(cx, base - this.px(8), c.riftCore, c.riftGlow, this.px(3));
     }
 
-    /* ============================================================
-       SECTION: REGION_BORDERS
-       ============================================================ */
+    /* ---------- 5. Границы регионов ---------- */
 
     // Чей пиксель: номер региона для каждого пикселя карты или -1 (вода, река, ничья земля).
     // Пиксель наследует регион своей клетки, но береговая линия скруглена и русла рек уже клетки, поэтому:
@@ -2567,14 +2579,12 @@ class MapPainter {
             }
             if (!border) continue;
 
-            const alpha = relief ? 0.5 - 0.4 * Math.min(1, relief[k] / 110) : 0.6; // в горах границы почти растворяются
+            const alpha = relief ? 0.6 - 0.5 * Math.min(1, relief[k] / 110) : 0.6; // в горах границы почти растворяются
             this.pixels[k] = mixPacked(this.pixels[k], color, alpha);
         }
     }
 
-    /* ============================================================
-       SECTION: OUTLINES_GRID
-       ============================================================ */
+    /* ---------- Контуры и сетка ---------- */
 
     /* Контур области пикселей: замкнутые ломаные в пикселях карты (координаты — углы пикселей). inside(x, y) говорит,
        входит ли пиксель в область; ищем её только в рамке x0..x1, y0..y1. Обход по часовой стрелке, внутри — справа.
@@ -2797,7 +2807,7 @@ class MapPainter {
         const lines = new Int32Array(image.data.buffer);
         const base = this.pixels;
         const alpha = Math.round(255 * this.options.gridOpacity);
-        const light = (0 << 16 | 0 << 8 | 0) | (alpha << 24);   // RGBA в порядке байтов r, g, b, a (little-endian)
+        const light = (255 << 16 | 255 << 8 | 255) | (alpha << 24);   // RGBA в порядке байтов r, g, b, a (little-endian)
         const dark = alpha << 24;
 
         const covered = this.spriteMask;                         // сетка тоже идёт по земле: под деревьями и домами её не видно
@@ -2816,9 +2826,7 @@ class MapPainter {
         return canvas;
     }
 
-    /* ============================================================
-       SECTION: FACTIONS
-       ============================================================ */
+    /* ---------- Фракции ---------- */
 
     // Территории фракций по состоянию, которое faction manager передал в карту (map.factions и map.tileFaction), в формате для paintTerritories: [{ id, color, tiles }].
     territoriesFromMap() {
@@ -2954,9 +2962,7 @@ class MapPainter {
         return canvas;
     }
 
-    /* ============================================================
-       SECTION: DECORATIONS
-       ============================================================ */
+    /* ---------- 6. Декорации ---------- */
 
     /* Все декорации собираем в один список и рисуем по возрастанию «основания» (нижней точки):
        то, что стоит ниже на карте, перекрывает то, что выше, — как в перспективе. Деревья могут свободно
@@ -3003,6 +3009,9 @@ class MapPainter {
                 case Resource.SETTLEMENT: this.collectSettlement(items, x, y, i); break;
             }
         });
+
+        if (this.mood === 'dark' && this.options.props) this.collectProps(items);
+
         items.sort((a, b) => a.y - b.y || a.x - b.x);
         return items;
     }

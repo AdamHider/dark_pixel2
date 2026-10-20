@@ -1,5 +1,4 @@
 /* ============================================================
-   SECTION: ECONOMY_MANAGER
    EconomyManager — экономика фракций: рост лесов и полей, рост поселений, запасы.
 
    Отдельный от карты модуль (заготовка). Он владеет экономическим состоянием (рост клеток, население, запасы и доход
@@ -48,13 +47,19 @@
    Если ваша функция устроена иначе (другие входы и выходы), её подключают через небольшой адаптер вокруг calculate.
    ============================================================ */
 
-// Доли роста за ход по сезонам для заглушки (названия сезонов — как в TurnManager). Неизвестный сезон ведёт себя как лето.
+// Запасная таблица роста за ход по сезонам — на случай, если в seasons.js у сезона нет поля growth. Неизвестный сезон ведёт себя как лето.
 const PLACEHOLDER_SEASON_RATES = Object.freeze({
     spring: { forest: 0.12, wheat: 0.30 },
     summer: { forest: 0.10, wheat: 0.30 },
     autumn: { forest: 0.05, wheat: -0.45 },   // осенью урожай убирают: поле пустеет, еда уходит в запас
     winter: { forest: 0.01, wheat: 0.0 }
 });
+
+// Скорость роста леса и поля за ход в этом сезоне: SEASONS[сезон].growth из seasons.js, а если там нет — запасная таблица выше.
+function seasonGrowthRates(season) {
+    const fromSeasons = typeof SEASONS !== 'undefined' && SEASONS[season] ? SEASONS[season].growth : null;
+    return fromSeasons || PLACEHOLDER_SEASON_RATES[season] || PLACEHOLDER_SEASON_RATES.summer;
+}
 
 class EconomyManager {
     static get DEFAULTS() {
@@ -72,9 +77,7 @@ class EconomyManager {
         this.attach(map);
     }
 
-    /* ============================================================
-       SECTION: STATE
-       ============================================================ */
+    /* ---------- Подключение к карте и состояние ---------- */
 
     // Привязать менеджер к карте (в том числе заново сгенерированной): экономическое состояние берётся с карты.
     attach(map) {
@@ -103,9 +106,7 @@ class EconomyManager {
         return () => this.listeners.delete(listener);
     }
 
-    /* ============================================================
-       SECTION: STEP
-       ============================================================ */
+    /* ---------- Один ход ---------- */
 
     /* Считает экономику за ход: для каждой фракции готовит снимок, вызывает функцию экономики, проверяет и применяет результат;
        потом растит природу вне владений и передаёт состояние в карту (один раз за ход). turn — контекст хода от TurnManager
@@ -209,24 +210,20 @@ class EconomyManager {
        Это не часть экономики фракций, поэтому её можно отключить (neutralGrowth: false) или заменить. */
     growNature(turn) {
         const map = this.map;
-        const rate = (PLACEHOLDER_SEASON_RATES[turn.season] || PLACEHOLDER_SEASON_RATES.summer).forest;
+        const rate = seasonGrowthRates(turn.season).forest;
         for (let i = 0; i < this.growth.length; i++) {
             if (map.tileFaction[i] === -1 && this.resource[i] === Resource.WOOD) this.growth[i] = clamp(this.growth[i] + rate);
         }
     }
 
-    /* ============================================================
-       SECTION: READ
-       ============================================================ */
+    /* ---------- Чтение ---------- */
 
     // Запасы, доход за последний ход и отчёт функции экономики для фракции.
     getFactionEconomy(factionId) {
         return { stockpile: { ...this.stockpileOf(factionId) }, income: { ...(this.incomes[factionId] || {}) }, report: this.reports[factionId] };
     }
 
-    /* ============================================================
-       SECTION: SAVE
-       ============================================================ */
+    /* ---------- Сохранение ---------- */
 
     // Состояние для сохранения (обычный объект, годится для JSON). Хранятся только отличия от свежесгенерированной карты.
     getState() {
@@ -252,17 +249,13 @@ class EconomyManager {
     }
 }
 
-/* ============================================================
-   SECTION: PLACEHOLDER
-   Заглушка экономики фракции (заменяется параметром calculate).
-   ============================================================ */
 /* ЗАГЛУШКА экономики фракции (EconomyManager.placeholder): простые правила, чтобы конвейер работал и рост был виден на карте.
    НЕ настоящая экономика — замените своей функцией (параметр calculate). Правила:
-     - леса растут по сезонам, поля растут весной и летом, осенью урожай убирается (еда уходит в запас);
+     - леса и поля растут по сезонам (скорость — SEASONS[сезон].growth из seasons.js), осенью урожай убирается (еда уходит в запас);
      - расход еды 0,4% населения за ход; если запаса хватает больше чем на 3 хода, поселения растут (до 1,5% за ход), если нет — убывают;
      - доход ресурсов: ResourceInfo.produces каждой клетки, умноженный на степень роста. */
 EconomyManager.placeholder = function placeholder(snapshot) {
-    const rates = PLACEHOLDER_SEASON_RATES[snapshot.season] || PLACEHOLDER_SEASON_RATES.summer;
+    const rates = seasonGrowthRates(snapshot.season);
     const stock = { food: 0, production: 0, gold: 0, ether: 0, ...snapshot.stockpile };
     const income = { food: 0, production: 0, gold: 0, ether: 0 };
     const changes = [];
