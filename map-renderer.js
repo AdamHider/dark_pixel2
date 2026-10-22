@@ -1,5 +1,4 @@
 /* ============================================================
-   SECTION: MAP_RENDERER
    MapRenderer — камера и взаимодействие с картой.
    Сама карта рисуется в MapPainter один раз в большой скрытый холст (buffer) в масштабе 1:1.
    Камера просто показывает нужный кусок этого холста с нужным зумом — поэтому двигать и зумить быстро.
@@ -91,15 +90,12 @@
         if (this.rebuildScheduled || this.buffer.width === 0) return;      // до первой отрисовки (refresh) перерисовывать нечего
         this.rebuildScheduled = true;
         Promise.resolve().then(() => {
-            if (!this.rebuildScheduled) return;        // за это время карту уже перерисовали (refresh, смена вида и т. п.)
-            this.rebuildBuffer();
-            this.draw();
+            if (this.rebuildScheduled) this.repaint();   // иначе за это время карту уже перерисовали (refresh, смена вида и т. п.)
         });
     }
 
     /* ============================================================
-       SECTION: PUBLIC
-       Публичные методы.
+       Публичные методы
        ============================================================ */
 
     // Вызывать после каждой новой генерации карты.
@@ -109,36 +105,37 @@
         this.fitToView();
     }
 
-    setView(view) {
-        this.view = view;
+    // Карта нарисована заново (вид, сезон, стиль, слои...) и выведена на экран.
+    repaint() {
         this.rebuildBuffer();
         this.draw();
+    }
+
+    setView(view) {
+        this.view = view;
+        this.repaint();
     }
 
     setSeason(name) {
         if (!SEASONS[name]) return;
         this.seasonName = name;
-        this.rebuildBuffer();
-        this.draw();
+        this.repaint();
     }
 
     // 'dark' — dark fantasy (приглушённые цвета, туман, мёртвые деревья, мрачные детали); 'light' — обычный стиль.
     setMood(mood) {
         this.mood = mood;
-        this.rebuildBuffer();
-        this.draw();
+        this.repaint();
     }
 
     setShowSettlements(show) {
         this.painter.options.settlements = show;
-        this.rebuildBuffer();
-        this.draw();
+        this.repaint();
     }
 
     setShowBorders(show) {
         this.showBorders = show;
-        this.rebuildBuffer();
-        this.draw();
+        this.repaint();
     }
 
     /* Сетка клеток: линии делят регионы и всю карту на клетки. Внутри региона это обычные квадраты, а у берега, рек и границ
@@ -150,8 +147,7 @@
     }
 
     /* ============================================================
-       SECTION: FACTIONS
-       Фракции.
+       Фракции
        ============================================================ */
 
     /* Слой фракций: цветная граница и лёгкая заливка земель каждой фракции. Рисуется отдельным слоем поверх карты, поэтому
@@ -195,9 +191,9 @@
         this.factionLayerVersion = version;
     }
 
+
     /* ============================================================
-       SECTION: OBJECTS
-       Объекты (города, деревни, армии...).
+       Объекты (города, деревни, армии...)
        ============================================================ */
 
     /* Объект рисуется по конфигу функцией SpriteRenderer, поверх карты, на экране (а не в буфере карты),
@@ -223,6 +219,7 @@
         this.draw();
     }
 
+
     // Где на экране стоит объект: левый верхний угол и размер спрайта.
     objectBox(object) {
         const unit = this.options.tileSize / 12;                 // спрайты нарисованы для клетки 12×12
@@ -243,11 +240,15 @@
         };
     }
 
+    // Рамки всех объектов на экране (вместе с самими объектами).
+    objectBoxes() {
+        return this.objects.map(object => ({ object, ...this.objectBox(object) }));
+    }
+
     drawObjects() {
         if (this.objects.length === 0) return;
         const { ctx, canvas } = this;
-        const boxes = this.objects.map(object => ({ object, ...this.objectBox(object) }));
-        boxes.sort((a, b) => a.baseY - b.baseY); // южнее (ближе) — рисуется позже и перекрывает
+        const boxes = this.objectBoxes().sort((a, b) => a.baseY - b.baseY);   // южнее (ближе) — рисуется позже и перекрывает
 
         ctx.save();
         ctx.imageSmoothingEnabled = false;
@@ -260,8 +261,7 @@
 
     // Объект под точкой экрана (самый южный из перекрывающихся) или null.
     objectAt(point) {
-        const hit = this.objects
-            .map(object => ({ object, ...this.objectBox(object) }))
+        const hit = this.objectBoxes()
             .filter(b => point.x >= b.x && point.x <= b.x + b.width && point.y >= b.y && point.y <= b.y + b.height)
             .sort((a, b) => b.baseY - a.baseY);
         return hit.length ? hit[0].object : null;
@@ -281,8 +281,7 @@
     }
 
     /* ============================================================
-       SECTION: CAMERA
-       Камера.
+       Камера
        ============================================================ */
 
     get worldSize() {
@@ -348,8 +347,7 @@
     }
 
     /* ============================================================
-       SECTION: SELECTION
-       Выделение по клику.
+       Выделение по клику
        ============================================================ */
 
     /* Какая клетка под точкой экрана. Клетки по логике всё те же квадраты, но на карте у берега, рек и границ регионов их
@@ -459,14 +457,28 @@
         ctx.closePath();
     }
 
+    // Контур «в два слоя»: широкая тёмная линия для контраста и узкая светлая сверху. Без path обводится текущий путь.
+    strokeDouble(path, darkStyle, darkWidth, lightStyle, lightWidth) {
+        const { ctx } = this;
+        for (const [style, width] of [[darkStyle, darkWidth], [lightStyle, lightWidth]]) {
+            ctx.strokeStyle = style;
+            ctx.lineWidth = width;
+            if (path) ctx.stroke(path); else ctx.stroke();
+        }
+    }
+
+    // Рисуем в мировых координатах (пикселях карты): трансформ камеры, а толщину линий делим на зум, чтобы на экране она не менялась.
+    applyWorldTransform() {
+        const { ctx, camera } = this;
+        ctx.setTransform(camera.zoom, 0, 0, camera.zoom, -camera.x * camera.zoom, -camera.y * camera.zoom);
+    }
+
     // Рисуется поверх карты на экране, а не в буфере: выделение можно менять без перерисовки всей карты.
     drawSelection() {
         if (!this.selection) return;
         const { ctx, camera } = this;
         const tileSize = this.options.tileSize;
         const cell = tileSize * camera.zoom; // размер клетки на экране
-        const screenX = tileX => (tileX * tileSize - camera.x) * camera.zoom;
-        const screenY = tileY => (tileY * tileSize - camera.y) * camera.zoom;
         const { tile, region, shape, cell: cellPath } = this.selection;
 
         ctx.save();
@@ -474,19 +486,11 @@
         ctx.lineCap = 'round';
 
         if (region && shape) {
-            // Путь задан в мировых координатах: переводим в экранные трансформом, а толщину линий делим на зум,
-            // чтобы на экране она оставалась прежней.
             ctx.save();
-            ctx.setTransform(camera.zoom, 0, 0, camera.zoom, -camera.x * camera.zoom, -camera.y * camera.zoom);
+            this.applyWorldTransform();
             ctx.fillStyle = 'rgba(255, 240, 170, 0.18)';
             ctx.fill(shape.fill, 'evenodd');
-
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
-            ctx.lineWidth = 5 / camera.zoom;
-            ctx.stroke(shape.stroke);
-            ctx.strokeStyle = '#ffe27a';
-            ctx.lineWidth = 2.5 / camera.zoom;
-            ctx.stroke(shape.stroke);
+            this.strokeDouble(shape.stroke, 'rgba(0, 0, 0, 0.55)', 5 / camera.zoom, '#ffe27a', 2.5 / camera.zoom);
             ctx.restore();
         }
 
@@ -494,33 +498,22 @@
             // Ячейка: форма клетки на карте (у берега, рек и границ регионов подогнана под регион). Углы прямые, как у линий сетки.
             ctx.save();
             ctx.lineJoin = 'miter';
-            ctx.setTransform(camera.zoom, 0, 0, camera.zoom, -camera.x * camera.zoom, -camera.y * camera.zoom);
+            this.applyWorldTransform();
             ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
             ctx.fill(cellPath, 'evenodd');
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
-            ctx.lineWidth = 4 / camera.zoom;
-            ctx.stroke(cellPath);
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2 / camera.zoom;
-            ctx.stroke(cellPath);
+            this.strokeDouble(cellPath, 'rgba(0, 0, 0, 0.6)', 4 / camera.zoom, '#ffffff', 2 / camera.zoom);
             ctx.restore();
         } else {
             const radius = cell * this.options.selectionCorner;
-            this.roundedRectPath(screenX(tile.x), screenY(tile.y), cell, cell, radius);
+            this.roundedRectPath((tile.x * tileSize - camera.x) * camera.zoom, (tile.y * tileSize - camera.y) * camera.zoom, cell, cell, radius);
             ctx.lineJoin = radius > 0 ? 'round' : 'miter';
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
-            ctx.lineWidth = 4;
-            ctx.stroke();
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
-            ctx.stroke();
+            this.strokeDouble(null, 'rgba(0, 0, 0, 0.6)', 4, '#ffffff', 2);
         }
         ctx.restore();
     }
 
     /* ============================================================
-       SECTION: RENDER
-       Вывод на экран.
+       Вывод на экран
        ============================================================ */
 
     resize() {
@@ -550,20 +543,26 @@
 
         const destX = (srcX - camera.x) * camera.zoom, destY = (srcY - camera.y) * camera.zoom;
         const destW = (srcRight - srcX) * camera.zoom, destH = (srcBottom - srcY) * camera.zoom;
-        ctx.drawImage(this.buffer, srcX, srcY, srcRight - srcX, srcBottom - srcY, destX, destY, destW, destH);
-        if (this.gridLayer) ctx.drawImage(this.gridLayer, srcX, srcY, srcRight - srcX, srcBottom - srcY, destX, destY, destW, destH);
+        const blit = layer => ctx.drawImage(layer, srcX, srcY, srcRight - srcX, srcBottom - srcY, destX, destY, destW, destH);
+
+        blit(this.buffer);
+        if (this.gridLayer) blit(this.gridLayer);
         this.ensureFactionLayer();
-        if (this.showFactions && this.factionLayer) ctx.drawImage(this.factionLayer, srcX, srcY, srcRight - srcX, srcBottom - srcY, destX, destY, destW, destH);
+        if (this.showFactions && this.factionLayer) blit(this.factionLayer);
         this.drawSelection();
         this.drawObjects();
     }
 
     /* ============================================================
-       SECTION: INPUT
-       Управление.
+       Управление
        ============================================================ */
 
     bindEvents() {
+        this.bindPointer();
+        this.bindKeyboard();
+    }
+
+    bindPointer() {
         const canvas = this.canvas;
 
         canvas.addEventListener('pointerdown', e => {
@@ -604,22 +603,23 @@
         canvas.addEventListener('wheel', e => {
             e.preventDefault();
             const point = this.pointerToCanvas(e);
-            const factor = e.deltaY < 0 ? this.options.zoomStep : 1 / this.options.zoomStep;
-            this.zoomAt(point.x, point.y, factor);
+            this.zoomAt(point.x, point.y, e.deltaY < 0 ? this.options.zoomStep : 1 / this.options.zoomStep);
         }, { passive: false });
+    }
 
-        // Клавиатура: стрелки/WASD — движение, +/- — зум, Esc — снять выделение. Холст должен быть в фокусе.
+    // Клавиатура: стрелки/WASD — движение, +/- — зум, Esc — снять выделение. Холст должен быть в фокусе.
+    bindKeyboard() {
+        const canvas = this.canvas;
         canvas.addEventListener('keydown', e => {
             const step = this.options.keyPanStep;
-            const center = { x: canvas.width / 2, y: canvas.height / 2 };
+            const zoomStep = this.options.zoomStep;
+            const zoom = factor => this.zoomAt(canvas.width / 2, canvas.height / 2, factor);
             const actions = {
                 ArrowLeft: () => this.panBy(step, 0), a: () => this.panBy(step, 0),
                 ArrowRight: () => this.panBy(-step, 0), d: () => this.panBy(-step, 0),
                 ArrowUp: () => this.panBy(0, step), w: () => this.panBy(0, step),
                 ArrowDown: () => this.panBy(0, -step), s: () => this.panBy(0, -step),
-                '+': () => this.zoomAt(center.x, center.y, this.options.zoomStep),
-                '=': () => this.zoomAt(center.x, center.y, this.options.zoomStep),
-                '-': () => this.zoomAt(center.x, center.y, 1 / this.options.zoomStep),
+                '+': () => zoom(zoomStep), '=': () => zoom(zoomStep), '-': () => zoom(1 / zoomStep),
                 Escape: () => this.clearSelection()
             };
             const action = actions[e.key];

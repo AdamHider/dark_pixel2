@@ -1,0 +1,35 @@
+ПОРЯДОК ПОДКЛЮЧЕНИЯ (обычные <script>-теги). Внутри каждой папки — строго в этом порядке: последний файл ставит остальные.
+
+generator/
+  1. map-base.js          справочники (Terrain, Biome, Shore, Resource...), утилиты, шум, куча, неймспейс MapGen
+  2. map-terrain.js       рельеф, климат/биомы, ресурсы, берега
+  3. map-rivers.js        реки и озёра
+  4. map-regions.js       регионы
+  5. map-settlements.js   поселения
+  6. map-roads.js         дороги
+  7. map-state.js         ход, экономика, фракции
+  8. map-queries.js       getTileInfo / getRegionInfo / regionGraph
+  9. map-generator.js     класс MapGenerator и конвейер generate()
+
+painter/   (после generator/: использует Terrain, Biome, Shore, Resource, ROAD_DIRECTIONS, clamp, GROWTH_STAGES, growthStage)
+  1. painter-colors.js    цвета и упаковка цвета
+  2. painter-kit.js       шум, хеши, светотень холмов, PixelBuffer, неймспейс MapPaint
+  3. painter-tools.js     общие инструменты (px, memo, anyAround, sprite, spreadMajority...)
+  4. painter-ground.js    фон, сглаживание берега, цвет клетки
+  5. painter-terrain.js   холмы, берега, текстура и трава
+  6. painter-mountains.js горы
+  7. painter-rivers.js    реки и переправы
+  8. painter-settlements.js дороги и поселения
+  9. painter-scene.js     деревья, поля, руды, эфир, пропсы, сборка сцены
+ 10. painter-style.js     тёмный стиль: цветокоррекция, туман, свет
+ 11. painter-overlays.js  границы регионов, ячейки, сетка, территории
+ 12. painter-core.js      класс MapPainter и порядок слоёв
+
+map-renderer.js           MapRenderer (после painter/ и ваших SEASONS, SpriteRenderer)
+
+Те же файлы одним куском: map-generator.js, map-painter.js, map-renderer.js (лежат рядом с этим архивом).
+
+tools/ — тесты на «ничего не изменилось» (нужен Node; сравнивают с вашей СТАРОЙ версией):
+  node tools/compare.js      старый-map-generator.js новый-map-generator.js
+  node tools/paintertest.js  "старый-gen.js,старый-painter.js" "новый-gen.js,новый-painter.js"
+  node tools/renderertest.js "старый-gen.js,старый-painter.js,старый-renderer.js" "новый-gen.js,новый-painter.js,новый-renderer.js"
