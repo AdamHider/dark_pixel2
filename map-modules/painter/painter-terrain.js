@@ -70,15 +70,28 @@
         /* Тип берега задаёт генератор (map.shore). Расстояние от воды считаем в пикселях: волной от воды вглубь суши.
              пляж     — полоса мокрого, потом сухого песка; в воде у берега белая пена;
              каменистый — галька и камни, пена послабее;
-             утёс     — суша приподнята над водой: под её краем видна каменная стенка (на юге) и тень на воде. */
+             утёс     — суша приподнята над водой: под её краем видна каменная стенка (на юге) и тень на воде.
+           Форма берега (какой пиксель какого вида, где пена) от сезона не зависит и считается один раз; при смене сезона
+           остаётся только перекраска. */
         paintShores() {
             if (!this.options.shores) return;
 
+            const geometry = this.buildShoreGeometry();
+            this.colorShoreLand(geometry);
+            this.paintFoam(geometry);
+            this.paintCliffs(geometry.queue, geometry.distance, geometry.kind);
+        },
+
+        buildShoreGeometry() {
+            const map = this.map;
+            const key = [this.tileSize, this.options.coastSharpness, this.waterKey].join('|');
+            return this.memo('shores', [map.shore, map.river, map.terrain, key], () => this.computeShoreGeometry());
+        },
+
+        computeShoreGeometry() {
             const map = this.map;
             const { size, T, W } = this.dim;
-            const pixels = this.pixels;
             const waterMask = this.waterMask;
-            const c = this.colors;
             const wet = Math.max(1, this.px(2));            // ширина полосы мокрого песка
             const reach = Math.max(3, Math.ceil(wet + this.tileSize / this.options.coastSharpness)); // на сколько пикселей берег уходит вглубь суши (мягче переход — шире полоса)
             const distance = new Uint8Array(W * W);         // суша: расстояние до воды (1..reach)
@@ -152,33 +165,6 @@
                 }
             }
 
-            // 3) покраска суши
-            for (const k of queue) {
-                const gx = k % W, gy = (k - gx) / W;
-                const d = distance[k];
-                const type = kind[k];
-                const threshold = BAYER[(gy & 3) * 4 + (gx & 3)];
-                const ground = pixels[k];
-                let color = 0;
-
-                if (type === Shore.BEACH) {
-                    if (d <= wet) color = c.wetSand;
-                    else if (threshold < 1 - (d - wet) / (reach - wet + 1)) color = hashUnit(gx, gy, 620) < 0.18 ? c.wetSand : c.sand;
-                    if (color !== 0) {
-                        const snow = this.snowCoverage(this.tileOf(k));
-                        if (snow > 0) color = mixPacked(color, this.packed.snow, 0.9 * snow);
-                    }
-                } else if (type === Shore.ROCKY) {
-                    if (threshold < 1 - (d - 1) / (reach + 1)) {
-                        const r = hashUnit(gx, gy, 621);
-                        color = r < 0.3 ? c.pebbleLight : r < 0.55 ? c.pebbleDark : mixPacked(ground, c.stoneMid, 0.6);
-                    }
-                } else if (type === Shore.CLIFF) {
-                    if (d <= 3 && threshold < 0.7) color = shadePacked(ground, -0.2);
-                }
-                if (color !== 0) pixels[k] = color;
-            }
-
             // 4) пена на воде у пляжей и каменистых берегов (если вода не замёрзла)
             const foam = [];
             for (const k of queue) {
@@ -203,14 +189,72 @@
                     }
                 }
             }
-            for (const k of foam) {
-                if (this.seasonalTemperature(this.tileOf(k)) < ICE_TEMPERATURE) continue;
+
+            // Для покраски (зависит от сезона только цвет): по каждому пикселю берега — клетка, узор дизеринга и «бросок кубика» по хешу.
+            const count = queue.length;
+            const tiles = new Int32Array(count), phase = new Uint8Array(count), variant = new Uint8Array(count);
+            for (let n = 0; n < count; n++) {
+                const k = queue[n];
                 const gx = k % W, gy = (k - gx) / W;
-                const threshold = BAYER[(gy & 3) * 4 + (gx & 3)];
-                if (kind[k] >= 20 && threshold < 0.4) pixels[k] = mixPacked(pixels[k], WHITE, 0.16);   // вторая полоса пены, чуть дальше от берега
+                tiles[n] = this.tileOf(k);
+                phase[n] = ((gy & 3) << 2) | (gx & 3);
+                if (kind[k] === Shore.BEACH) variant[n] = hashUnit(gx, gy, 620) < 0.18 ? 1 : 0;      // 1 — пятно мокрого песка среди сухого
+                else if (kind[k] === Shore.ROCKY) {
+                    const r = hashUnit(gx, gy, 621);
+                    variant[n] = r < 0.3 ? 0 : r < 0.55 ? 1 : 2;                                       // светлая галька / тёмная / камень
+                }
             }
 
-            this.paintCliffs(queue, distance, kind);
+            // Вторая полоса пены, чуть дальше от берега: только пиксели, где узор её пропускает.
+            const foamPixels = [];
+            for (const k of foam) {
+                const gx = k % W, gy = (k - gx) / W;
+                if (kind[k] >= 20 && BAYER[(gy & 3) * 4 + (gx & 3)] < 0.4) foamPixels.push(k);
+            }
+            const foamTiles = Int32Array.from(foamPixels, k => this.tileOf(k));
+
+            return { queue: Int32Array.from(queue), distance, kind, tiles, phase, variant, wet, reach, foamPixels: Int32Array.from(foamPixels), foamTiles };
+        },
+
+        // 3) покраска суши
+        colorShoreLand({ queue, distance, kind, tiles, phase, variant, wet, reach }) {
+            const pixels = this.pixels;
+            const c = this.colors;
+            const snowColor = this.packed.snow;
+
+            for (let n = 0; n < queue.length; n++) {
+                const k = queue[n];
+                const d = distance[k];
+                const type = kind[k];
+                const threshold = BAYER[phase[n]];
+                let color = 0;
+
+                if (type === Shore.BEACH) {
+                    if (d <= wet) color = c.wetSand;
+                    else if (threshold < 1 - (d - wet) / (reach - wet + 1)) color = variant[n] ? c.wetSand : c.sand;
+                    if (color !== 0) {
+                        const snow = this.snowCoverage(tiles[n]);
+                        if (snow > 0) color = mixPacked(color, snowColor, 0.9 * snow);
+                    }
+                } else if (type === Shore.ROCKY) {
+                    if (threshold < 1 - (d - 1) / (reach + 1)) {
+                        color = variant[n] === 0 ? c.pebbleLight : variant[n] === 1 ? c.pebbleDark : mixPacked(pixels[k], c.stoneMid, 0.6);
+                    }
+                } else if (type === Shore.CLIFF) {
+                    if (d <= 3 && threshold < 0.7) color = shadePacked(pixels[k], -0.2);
+                }
+                if (color !== 0) pixels[k] = color;
+            }
+        },
+
+        // 4) пена на воде у пляжей и каменистых берегов (если вода не замёрзла)
+        paintFoam({ foamPixels, foamTiles }) {
+            const pixels = this.pixels;
+            for (let n = 0; n < foamPixels.length; n++) {
+                if (this.seasonalTemperature(foamTiles[n]) < ICE_TEMPERATURE) continue;
+                const k = foamPixels[n];
+                pixels[k] = mixPacked(pixels[k], WHITE, 0.16);
+            }
         },
 
         // Утёсы: суша «приподнята» — под её южным краем стенка из камня, под ней тень на воде. Идём по тем же пикселям берега,

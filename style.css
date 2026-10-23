@@ -326,6 +326,7 @@ label {
 .tile-coords {
     font-weight: bold;
     color: var(--gold);
+    text-transform: capitalize;
 }
 .tile-kind {
     color: var(--ink-dim);
@@ -350,18 +351,15 @@ label {
 }
 
 .region-card {
-    background: linear-gradient(180deg, #1b2229, #141a20);
-    border: 2px solid var(--edge-dark);
-    padding: 10px;
-    box-shadow: inset 0 1px 0 #3a4550, 0 4px 10px rgba(0,0,0,0.5);
-    margin-top: 8px;
+    margin-bottom: 8px;
+    padding-top: 160px;
 }
 
 .region-card-header {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    margin-bottom: 8px;
+    margin-top: 8px;
     padding-bottom: 6px;
     border-bottom: 1px solid #2d3742;
 }
@@ -373,19 +371,47 @@ label {
 }
 
 .region-id {
-    font: 11px/1 var(--font-pixel);
-    color: var(--gold);
-    letter-spacing: .05em;
-    text-shadow: 0 1px 0 #000;
+    background: var(--panel);
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 2px;
+    border: 1px solid var(--edge);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.8);
+}
+/* Баннер региона с динамической картинкой */
+.region-banner {
+    position: absolute;
+    height: 172px;
+    background-size: cover;
+    background-position: center;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 8px;
+    top: 0;
+    left: 0;
+    width: 100%;
+    z-index: -1;
+    box-shadow: inset 0px 0px 0px 2px #2b333c;
 }
 
+.region-banner-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    /*background: linear-gradient(180deg, rgba(7,9,12,0.2) 0%, rgba(7,9,12,0.85) 100%);*/
+    pointer-events: none;
+}
+
+.region-banner .biome-badge {
+    position: relative;
+    z-index: 2;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.8);
+}
 /* Бейджи биомов для шапки */
 .biome-badge {
     font-size: 11px;
     padding: 2px 6px;
     border-radius: 2px;
-    text-transform: capitalize;
-    font-weight: 600;
     background: #28323c;
     color: var(--ink);
     border: 1px solid var(--edge);

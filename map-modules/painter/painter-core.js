@@ -60,6 +60,7 @@ class MapPainter {
 
         this.width = this.map.size * this.tileSize;
         this.dim = { size: this.map.size, T: this.tileSize, W: this.width };   // сторона карты в клетках, клетка и карта в пикселях
+        this.tileTable = this.memo('tileTable', [this.map.size, this.tileSize], () => this.buildTileTable());   // пиксель -> клетка без делений
         this.canvas.width = this.width;
         this.canvas.height = this.width;
         const image = this.ctx.createImageData(this.width, this.width);
@@ -81,6 +82,7 @@ class MapPainter {
         const terrain = view === 'terrain';
         this.paintBase();
         this.smoothCoast();
+        this.waterKey = MapPaint.fingerprint(this.waterMask);   // по нему кэши форм (берега и др.) узнают, что вода не изменилась
         if (terrain) {
             if (layers.relief) {
                 this.relief = this.buildReliefHeights();

@@ -291,6 +291,18 @@ const MapPaint = {
         return top + (c + (d - c) * u - top) * v;
     },
 
+    // Отпечаток содержимого байтового массива (две 32-битные свёртки): по нему кэши узнают, что маска не изменилась.
+    fingerprint(bytes) {
+        const words = new Int32Array(bytes.buffer, bytes.byteOffset, bytes.length >> 2);
+        let h1 = 0x811c9dc5 | 0, h2 = 0x01000193 | 0;
+        for (let i = 0; i < words.length; i++) {
+            h1 = Math.imul(h1 ^ words[i], 0x01000193);
+            h2 = Math.imul(h2 + words[i], 0x85ebca6b) ^ (h2 >>> 15);
+        }
+        for (let i = words.length * 4; i < bytes.length; i++) h1 = Math.imul(h1 ^ bytes[i], 0x01000193);
+        return h1 + ':' + h2;
+    },
+
     DIRECTIONS_4: [[-1, 0], [1, 0], [0, -1], [0, 1]],   // влево, вправо, вверх, вниз
 
     GROUND_LAYERS: [['hills', 'paintHills'], ['shores', 'paintShores'], ['rivers', 'paintRivers'], ['roads', 'paintRoads'], ['settlements', 'paintSettlementGround']]
@@ -329,10 +341,22 @@ const MapPaint = {
             return false;
         },
 
+        // Таблицы «строка/столбец пикселей -> клетка»: tileOf(k) тогда — два чтения и сложение вместо двух делений.
+        buildTileTable() {
+            const { size, T, W } = this.dim;
+            const rowBase = new Int32Array(W), column = new Int32Array(W);
+            for (let i = 0; i < W; i++) {
+                rowBase[i] = Math.floor(i / T) * size;
+                column[i] = Math.floor(i / T);
+            }
+            return { rowBase, column, W };
+        },
+
         // Клетка, в которой лежит пиксель k.
         tileOf(k) {
-            const { size, T, W } = this.dim;
-            return Math.floor(Math.floor(k / W) / T) * size + Math.floor((k % W) / T);
+            const { rowBase, column, W } = this.tileTable;
+            const y = (k / W) | 0;
+            return rowBase[y] + column[k - y * W];
         },
 
         // Температура клетки с учётом сезона: зимой холоднее, летом теплее.
@@ -883,15 +907,28 @@ const MapPaint = {
         /* Тип берега задаёт генератор (map.shore). Расстояние от воды считаем в пикселях: волной от воды вглубь суши.
              пляж     — полоса мокрого, потом сухого песка; в воде у берега белая пена;
              каменистый — галька и камни, пена послабее;
-             утёс     — суша приподнята над водой: под её краем видна каменная стенка (на юге) и тень на воде. */
+             утёс     — суша приподнята над водой: под её краем видна каменная стенка (на юге) и тень на воде.
+           Форма берега (какой пиксель какого вида, где пена) от сезона не зависит и считается один раз; при смене сезона
+           остаётся только перекраска. */
         paintShores() {
             if (!this.options.shores) return;
 
+            const geometry = this.buildShoreGeometry();
+            this.colorShoreLand(geometry);
+            this.paintFoam(geometry);
+            this.paintCliffs(geometry.queue, geometry.distance, geometry.kind);
+        },
+
+        buildShoreGeometry() {
+            const map = this.map;
+            const key = [this.tileSize, this.options.coastSharpness, this.waterKey].join('|');
+            return this.memo('shores', [map.shore, map.river, map.terrain, key], () => this.computeShoreGeometry());
+        },
+
+        computeShoreGeometry() {
             const map = this.map;
             const { size, T, W } = this.dim;
-            const pixels = this.pixels;
             const waterMask = this.waterMask;
-            const c = this.colors;
             const wet = Math.max(1, this.px(2));            // ширина полосы мокрого песка
             const reach = Math.max(3, Math.ceil(wet + this.tileSize / this.options.coastSharpness)); // на сколько пикселей берег уходит вглубь суши (мягче переход — шире полоса)
             const distance = new Uint8Array(W * W);         // суша: расстояние до воды (1..reach)
@@ -965,33 +1002,6 @@ const MapPaint = {
                 }
             }
 
-            // 3) покраска суши
-            for (const k of queue) {
-                const gx = k % W, gy = (k - gx) / W;
-                const d = distance[k];
-                const type = kind[k];
-                const threshold = BAYER[(gy & 3) * 4 + (gx & 3)];
-                const ground = pixels[k];
-                let color = 0;
-
-                if (type === Shore.BEACH) {
-                    if (d <= wet) color = c.wetSand;
-                    else if (threshold < 1 - (d - wet) / (reach - wet + 1)) color = hashUnit(gx, gy, 620) < 0.18 ? c.wetSand : c.sand;
-                    if (color !== 0) {
-                        const snow = this.snowCoverage(this.tileOf(k));
-                        if (snow > 0) color = mixPacked(color, this.packed.snow, 0.9 * snow);
-                    }
-                } else if (type === Shore.ROCKY) {
-                    if (threshold < 1 - (d - 1) / (reach + 1)) {
-                        const r = hashUnit(gx, gy, 621);
-                        color = r < 0.3 ? c.pebbleLight : r < 0.55 ? c.pebbleDark : mixPacked(ground, c.stoneMid, 0.6);
-                    }
-                } else if (type === Shore.CLIFF) {
-                    if (d <= 3 && threshold < 0.7) color = shadePacked(ground, -0.2);
-                }
-                if (color !== 0) pixels[k] = color;
-            }
-
             // 4) пена на воде у пляжей и каменистых берегов (если вода не замёрзла)
             const foam = [];
             for (const k of queue) {
@@ -1016,14 +1026,72 @@ const MapPaint = {
                     }
                 }
             }
-            for (const k of foam) {
-                if (this.seasonalTemperature(this.tileOf(k)) < ICE_TEMPERATURE) continue;
+
+            // Для покраски (зависит от сезона только цвет): по каждому пикселю берега — клетка, узор дизеринга и «бросок кубика» по хешу.
+            const count = queue.length;
+            const tiles = new Int32Array(count), phase = new Uint8Array(count), variant = new Uint8Array(count);
+            for (let n = 0; n < count; n++) {
+                const k = queue[n];
                 const gx = k % W, gy = (k - gx) / W;
-                const threshold = BAYER[(gy & 3) * 4 + (gx & 3)];
-                if (kind[k] >= 20 && threshold < 0.4) pixels[k] = mixPacked(pixels[k], WHITE, 0.16);   // вторая полоса пены, чуть дальше от берега
+                tiles[n] = this.tileOf(k);
+                phase[n] = ((gy & 3) << 2) | (gx & 3);
+                if (kind[k] === Shore.BEACH) variant[n] = hashUnit(gx, gy, 620) < 0.18 ? 1 : 0;      // 1 — пятно мокрого песка среди сухого
+                else if (kind[k] === Shore.ROCKY) {
+                    const r = hashUnit(gx, gy, 621);
+                    variant[n] = r < 0.3 ? 0 : r < 0.55 ? 1 : 2;                                       // светлая галька / тёмная / камень
+                }
             }
 
-            this.paintCliffs(queue, distance, kind);
+            // Вторая полоса пены, чуть дальше от берега: только пиксели, где узор её пропускает.
+            const foamPixels = [];
+            for (const k of foam) {
+                const gx = k % W, gy = (k - gx) / W;
+                if (kind[k] >= 20 && BAYER[(gy & 3) * 4 + (gx & 3)] < 0.4) foamPixels.push(k);
+            }
+            const foamTiles = Int32Array.from(foamPixels, k => this.tileOf(k));
+
+            return { queue: Int32Array.from(queue), distance, kind, tiles, phase, variant, wet, reach, foamPixels: Int32Array.from(foamPixels), foamTiles };
+        },
+
+        // 3) покраска суши
+        colorShoreLand({ queue, distance, kind, tiles, phase, variant, wet, reach }) {
+            const pixels = this.pixels;
+            const c = this.colors;
+            const snowColor = this.packed.snow;
+
+            for (let n = 0; n < queue.length; n++) {
+                const k = queue[n];
+                const d = distance[k];
+                const type = kind[k];
+                const threshold = BAYER[phase[n]];
+                let color = 0;
+
+                if (type === Shore.BEACH) {
+                    if (d <= wet) color = c.wetSand;
+                    else if (threshold < 1 - (d - wet) / (reach - wet + 1)) color = variant[n] ? c.wetSand : c.sand;
+                    if (color !== 0) {
+                        const snow = this.snowCoverage(tiles[n]);
+                        if (snow > 0) color = mixPacked(color, snowColor, 0.9 * snow);
+                    }
+                } else if (type === Shore.ROCKY) {
+                    if (threshold < 1 - (d - 1) / (reach + 1)) {
+                        color = variant[n] === 0 ? c.pebbleLight : variant[n] === 1 ? c.pebbleDark : mixPacked(pixels[k], c.stoneMid, 0.6);
+                    }
+                } else if (type === Shore.CLIFF) {
+                    if (d <= 3 && threshold < 0.7) color = shadePacked(pixels[k], -0.2);
+                }
+                if (color !== 0) pixels[k] = color;
+            }
+        },
+
+        // 4) пена на воде у пляжей и каменистых берегов (если вода не замёрзла)
+        paintFoam({ foamPixels, foamTiles }) {
+            const pixels = this.pixels;
+            for (let n = 0; n < foamPixels.length; n++) {
+                if (this.seasonalTemperature(foamTiles[n]) < ICE_TEMPERATURE) continue;
+                const k = foamPixels[n];
+                pixels[k] = mixPacked(pixels[k], WHITE, 0.16);
+            }
         },
 
         // Утёсы: суша «приподнята» — под её южным краем стенка из камня, под ней тень на воде. Идём по тем же пикселям берега,
@@ -2656,7 +2724,153 @@ const MapPaint = {
            регион, которому принадлежит большинство пикселей суши в круге радиуса regionBorderSmoothing (при равенстве
            остаётся как был). Ступеньки по клеткам и прямые углы превращаются в плавные изгибы. Вода и реки не голосуют и
            не меняются, поэтому границы по-прежнему упираются в берег. Работаем только вблизи границ. */
+        /* Сглаживание границ: каждый пиксель рядом с границей (в радиусе radius) переходит к региону, за который «голосует»
+           большинство пикселей круга радиуса radius вокруг него (при равенстве остаётся свой, потом — кто встретился первым).
+           Голосование идёт по снимку, чтобы результат не зависел от порядка обхода.
+           Круг не пересчитывается заново для каждого пикселя: идя по строке, мы сдвигаем окно на пиксель (в каждой из строк круга
+           одна точка добавляется, одна убирается). Результат тот же, что у прямого перебора (smoothPixelRegionsDirect), только в разы быстрее. */
         smoothPixelRegions(owner) {
+            const radius = this.options.regionBorderSmoothing;
+            if (!radius) return owner;
+            const { W } = this.dim;
+            const total = W * W;
+
+            // круг: в строке dy точки от -half[dy] до +half[dy]
+            const half = new Int32Array(2 * radius + 1);
+            for (let dy = -radius; dy <= radius; dy++) {
+                let h = 0;
+                while ((h + 1) * (h + 1) + dy * dy <= radius * radius + 0.25) h++;
+                half[dy + radius] = h;
+            }
+
+            // 1) пиксели рядом с границей (в радиусе radius)
+            const near = new Uint8Array(total);
+            const stamp = (cx, cy) => {
+                for (let dy = -radius; dy <= radius; dy++) {
+                    const y = cy + dy;
+                    if (y < 0 || y >= W) continue;
+                    const h = half[dy + radius];
+                    near.fill(1, y * W + Math.max(0, cx - h), y * W + Math.min(W - 1, cx + h) + 1);   // пиксели вне регионов отсеем при голосовании
+                }
+            };
+            for (let k = 0; k < total; k++) {
+                const id = owner[k];
+                if (id < 0) continue;
+                const x = k % W;
+                const right = x < W - 1 ? owner[k + 1] : -1;
+                const below = k < total - W ? owner[k + W] : -1;
+                if ((right >= 0 && right !== id) || (below >= 0 && below !== id)) stamp(x, (k - x) / W);
+            }
+
+            // 2) голосование: окно (какие регионы и сколько пикселей каждого в круге)
+            const result = Int16Array.from(owner);
+            const MAX_DISTINCT = 16;                       // у прямого перебора больше 16 разных регионов в круге не учитываются
+            let maxId = 0;
+            for (let k = 0; k < total; k++) if (owner[k] > maxId) maxId = owner[k];
+            const count = new Int32Array(maxId + 1);       // сколько пикселей региона в окне
+            const active = new Int16Array((2 * radius + 1) * (2 * radius + 1) + 1);   // регионы, которые сейчас в окне
+            let distinct = 0;
+            const add = id => {
+                if (count[id]++ === 0) active[distinct++] = id;
+            };
+            const remove = id => {
+                if (--count[id] !== 0) return;
+                for (let s = 0; s < distinct; s++) {         // регион ушёл из окна: на его место — последний
+                    if (active[s] === id) { active[s] = active[--distinct]; return; }
+                }
+            };
+            const fill = (x, y) => {                       // окно с нуля
+                for (let s = 0; s < distinct; s++) count[active[s]] = 0;
+                distinct = 0;
+                for (let dy = -radius; dy <= radius; dy++) {
+                    const ny = y + dy;
+                    if (ny < 0 || ny >= W) continue;
+                    const h = half[dy + radius];
+                    for (let nx = Math.max(0, x - h); nx <= Math.min(W - 1, x + h); nx++) {
+                        const id = owner[ny * W + nx];
+                        if (id >= 0) add(id);
+                    }
+                }
+            };
+
+            for (let y = 0; y < W; y++) {
+                let inRun = false;
+                for (let x = 0; x < W; x++) {
+                    const k = y * W + x;
+                    if (!near[k] || owner[k] < 0) { inRun = false; continue; }
+
+                    if (!inRun) {
+                        fill(x, y);
+                        inRun = true;
+                    } else {                               // окно сдвинулось с (x - 1) на x
+                        for (let dy = -radius; dy <= radius; dy++) {
+                            const ny = y + dy;
+                            if (ny < 0 || ny >= W) continue;
+                            const h = half[dy + radius];
+                            const gone = x - 1 - h, came = x + h;
+                            const left = gone >= 0 ? owner[ny * W + gone] : -1;
+                            const right = came < W ? owner[ny * W + came] : -1;
+                            if (left === right) continue;    // ушёл и пришёл один регион (или оба «пустые»): окно не изменилось
+                            if (left >= 0) remove(left);
+                            if (right >= 0) add(right);
+                        }
+                    }
+
+                    // победитель: регион с наибольшим числом пикселей (строго больше, чем у своего)
+                    const own = owner[k];
+                    const ownVotes = count[own];
+                    let top = 0, topId = 0, leaders = 0;
+                    for (let s = 0; s < distinct; s++) {
+                        const votes = count[active[s]];
+                        if (votes > top) { top = votes; topId = active[s]; leaders = 1; } else if (votes === top) leaders++;
+                    }
+                    if (distinct > MAX_DISTINCT || (top > ownVotes && leaders > 1)) {
+                        // редкие случаи (много регионов или ничья): порядок «кто встретился первым» знает только прямой перебор
+                        result[k] = this.voteDirect(owner, x, y, radius, half);
+                    } else {
+                        result[k] = top > ownVotes ? topId : own;
+                    }
+                }
+            }
+            return result;
+        },
+
+        // Прямое голосование по кругу для одного пикселя: так считает smoothPixelRegionsDirect. Нужно для ничьих и «толпы» регионов.
+        voteDirect(owner, x, y, radius, half) {
+            const { W } = this.dim;
+            const ids = new Int16Array(16), votes = new Int32Array(16);
+            const own = owner[y * W + x];
+            let distinct = 0;
+            for (let dy = -radius; dy <= radius; dy++) {
+                const ny = y + dy;
+                if (ny < 0 || ny >= W) continue;
+                const h = half[dy + radius];
+                for (let dx = -h; dx <= h; dx++) {
+                    const nx = x + dx;
+                    if (nx < 0 || nx >= W) continue;
+                    const id = owner[ny * W + nx];
+                    if (id < 0) continue;
+                    let slot = 0;
+                    while (slot < distinct && ids[slot] !== id) slot++;
+                    if (slot === distinct) {
+                        if (distinct === 16) continue;
+                        ids[distinct] = id;
+                        votes[distinct] = 0;
+                        distinct++;
+                    }
+                    votes[slot]++;
+                }
+            }
+            let ownVotes = 0;
+            for (let s = 0; s < distinct; s++) if (ids[s] === own) ownVotes = votes[s];
+            let best = own, bestVotes = ownVotes;
+            for (let s = 0; s < distinct; s++) {
+                if (votes[s] > bestVotes) { best = ids[s]; bestVotes = votes[s]; }
+            }
+            return best;
+        },
+
+        smoothPixelRegionsDirect(owner) {
             const radius = this.options.regionBorderSmoothing;
             if (!radius) return owner;
             const { W } = this.dim;
@@ -3168,6 +3382,7 @@ class MapPainter {
 
         this.width = this.map.size * this.tileSize;
         this.dim = { size: this.map.size, T: this.tileSize, W: this.width };   // сторона карты в клетках, клетка и карта в пикселях
+        this.tileTable = this.memo('tileTable', [this.map.size, this.tileSize], () => this.buildTileTable());   // пиксель -> клетка без делений
         this.canvas.width = this.width;
         this.canvas.height = this.width;
         const image = this.ctx.createImageData(this.width, this.width);
@@ -3189,6 +3404,7 @@ class MapPainter {
         const terrain = view === 'terrain';
         this.paintBase();
         this.smoothCoast();
+        this.waterKey = MapPaint.fingerprint(this.waterMask);   // по нему кэши форм (берега и др.) узнают, что вода не изменилась
         if (terrain) {
             if (layers.relief) {
                 this.relief = this.buildReliefHeights();

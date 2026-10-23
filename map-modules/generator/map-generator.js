@@ -33,17 +33,9 @@ MapGen.NOISE_LAYERS = ['elevation', 'ridge', 'temperature', 'moisture', 'warpX',
     'regionShape', 'islands', 'massif', 'forestClumps', 'fertilityClumps', 'ore', 'fault', 'shore', 'iron'];
 
 // Шаги генерации по порядку. Каждый — метод MapGenerator (см. миксины ниже).
-MapGen.GENERATION_PIPELINE = [
-    // рельеф
-    'generateElevation', 'scatterIslands', 'generateMoisture', 'classifyTerrain', 'removeSmallMountains', 'removeSmallIslands',
-    'collectLandTiles', 'fillDepressions', 'computeWaterDepth',
-    // климат и ресурсы
-    'generateTemperature', 'assignBiomes', 'placeResources',
-    // воды и берега
-    'generateRivers', 'classifyShores', 'placeRareResources', 'placeRiverCrossings',
-    // люди
-    'buildRegions', 'placeSettlements', 'buildRoads', 'clearRoadResources', 'initGrowth'
-];
+// Этапы генерации по порядку. Каждый — подсистема MapGen.<Имя> с единым входом build(map); её настройки (defaults) собираются
+// в MapGenerator.DEFAULTS. Порядок важен: от него зависят и результат, и последовательность случайных чисел (а значит, все карты).
+MapGen.PIPELINE = ['Relief', 'Drainage', 'Climate', 'Flora', 'Rivers', 'Shores', 'Deposits', 'Crossings', 'Regions', 'Settlements', 'Roads', 'Growth'];
 
 /* Простой «канал»: подписчики получают каждое новое состояние. Подписка возвращает функцию отписки. */
 MapGen.Emitter = class Emitter {
@@ -65,107 +57,14 @@ MapGen.Emitter = class Emitter {
    MapGenerator — ядро
    ============================================================ */
 class MapGenerator {
+    // Настройки лежат рядом с кодом своей подсистемы (MapGen.<Имя>.defaults); здесь собираются в один плоский объект.
     static get DEFAULTS() {
-        return {
-            size: 150,                // сторона карты в клетках (значения «по размеру карты» ниже заданы для 300 и пересчитываются)
-            seed: 1,
-
-            // --- суша и вода ---
-            waterShare: 0.45,         // какая доля клеток станет водой
-            mountainShare: 0.16,      // какая доля суши станет горами
-            shallowWaterDistance: 2,  // вода не дальше N клеток от суши считается мелководьем
-            elevationScale: 9,        // масштаб шума высоты (больше — мельче материки)
-            elevationOctaves: 5,
-            baseElevation: 0.25,      // общий «подъём» рельефа
-            islandFalloff: 0.5,       // насколько сильно рельеф падает к краям (мир окружён водой)
-            falloffPower: 2.5,        // форма спада к краям (2 — плавно, 4 — «плато» с обрывом у краёв)
-            shapeVariety: 0.8,        // 0..1: насколько изрезана форма континента (заливы, полуострова, острова)
-            shapeScale: 8,            // размер деталей формы (больше — мельче)
-            inlandSeaStrength: 0.35,  // 0 — внутренних морей нет; больше — крупнее и чаще
-            inlandSeaScale: 3.0,      // размер внутренних морей (больше — мельче и чаще)
-            islandDensity: 0.4,       // 0..1: сколько островков разбросано вокруг материка (0 — только материк)
-            islandScale: 10,          // размер островков (больше — мельче)
-            ridgeScale: 4,            // масштаб горных хребтов
-            ridgeStrength: 0.4,       // насколько хребты поднимают рельеф
-            mountainClustering: 0.5,  // 0..1: 0 — тонкие цепи хребтов, 1 — сплошные массивы; посередине — массивы с ущельями
-            massifScale: 22,           // размер горных массивов (больше — мельче и чаще)
-            ridgeSharpness: 1,        // больше — тоньше и резче хребты
-            warpScale: 3.0,           // масштаб «скручивания» координат (делает берега и хребты извилистыми)
-            warpStrength: 0.25,       // сила скручивания; 0 — выключить
-            minMountainSize: 10,       // горные массивы меньше этого размера (в клетках) превращаются в равнину
-            minIslandSize: 12,        // клочки суши меньше этого размера (в клетках) превращаются в воду
-
-            // --- климат ---
-            temperatureScale: 4,
-            temperatureNoise: 0.55,   // разброс температуры вокруг «север холодно, юг жарко»
-            altitudeCooling: 0.1,     // насколько высота охлаждает
-            moistureScale: 5,
-            aridity: 0.45,            // 0..1: доля сухих клеток, где вместо луга степь/пустыня (меньше — меньше степей)
-
-            // --- ресурсы ---
-            forestScale: 15,           // масштаб крупных лесных массивов (больше — мельче)
-            forestShare: 0.70,        // доля карты под крупными лесными массивами
-            forestClumpShare: 0.14,    // ...и ещё столько же мелких разрозненных рощ
-            woodChance: 0.9,          // шанс дерева в клетке внутри леса
-            wheatScale: 15,
-            wheatShare: 0.5,          // то же для полей
-            wheatClumpShare: 0.14,
-            wheatChance: 0.85,
-            clumpScale: 16,           // размер мелких рощ и полей (больше — мельче)
-
-            // --- редкие ресурсы ---
-            foothillDistance: 2,      // руда встречается в горах и на равнине не дальше N клеток от них
-            goldScale: 6,
-            goldShare: 0.45,          // доля карты, где вообще возможно золото (скопления)
-            goldChance: 0.05,         // шанс золота в такой клетке (в предгорьях вдвое меньше)
-            ironScale: 5,
-            ironShare: 0.5,           // то же для железной руды
-            ironChance: 0.16,         // железо встречается заметно чаще золота
-            faultScale: 5,            // масштаб «линий разлома», вдоль которых растёт эфир
-            etherShare: 0.06,         // доля карты вдоль линий разлома
-            etherChance: 0.35,        // шанс эфира на такой клетке
-
-            // --- берега ---
-            shoreScale: 12,           // размер участков одного типа берега (больше — мельче)
-            beachShare: 0.55,         // доля подходящих (низких, тёплых) берегов, которые станут пляжами
-            cliffShare: 0.25,         // доля самых высоких берегов, которые станут утёсами (горы у воды — всегда утёсы)
-
-            // --- поселения ---
-            populationPerHabitability: 10,  // население региона = сумма «обитаемости» его клеток × это число × случайный множитель
-            populationVariation: 0.9,       // разброс населения между регионами (больше — больше и крупных городов, и пустых земель)
-            settlementMinPopulation: 60,    // население группы меньше этого — поселения нет
-            settlementMaxGroup: 4,          // в группе (деревня, город) не больше стольких соседних клеток
-            settlementGroupGrowth: 2.2,     // во сколько раз надо увеличить население, чтобы в группе стало на клетку больше
-            settlementMaxLevel: 4,          // самый большой уровень клетки (он же число домиков в клетке)
-            settlementTileMinPopulation: 58, // население клетки, с которого начинается уровень 1
-            settlementTileGrowth: 1.5,      // во сколько раз надо увеличить население клетки, чтобы уровень вырос на 1
-            secondSettlementPopulation: 900, // у региона с таким населением и больше будет вторая группа
-            settlementSpacing: 2,           // минимум клеток между группами поселений
-
-            // --- дороги между поселениями ---
-            roads: true,
-            roadNeighbors: 3,               // с сколькими ближайшими соседями пробуем соединить каждое поселение
-            roadMaxDistance: 28,            // дальше этого (в клетках) дорог не строим
-            roadLoopChance: 0.4,            // шанс добавить «петлю» — вторую по близости дорогу, когда связь уже есть
-
-            // --- реки и озёра ---
-            rainfall: 0.5,              // сколько воды даёт клетка (во влажных местах больше); больше — больше и шире реки
-            riverThresholds: [60, 180, 480], // сколько воды надо, чтобы появился ручей / река / большая река
-            riverMeander: 0.010,      // насколько русла отклоняются от «кратчайшего» пути (больше — извилистее)
-            lakeDepth: 0.02,          // впадина глубже этого становится озером
-            lakeMinSize: 4,           // озёра меньше этого (в клетках) не создаём
-            riverCrossingChance: 0.2,  // доля подходящих прямых участков рек, где ставится мост или брод
-
-            // --- регионы ---
-            regionMinSize: 18,
-            regionMaxSize: 22,
-            regionMergeBelow: 10,     // регионы меньше этого размера вливаются в самого маленького соседа
-            regionIrregularity: 0.6,  // 0 — почти круглые регионы, больше — причудливее границы
-            regionBarrierCost: 3,     // насколько горы «мешают» росту региона (границы ложатся по хребтам); реки всегда граница и в регион не входят
-            regionBalancePasses: 12,  // сколько раз выравнивать размеры регионов (0 — не выравнивать)
-            regionRelaxPasses: 8,     // сколько раз «центровать» регионы вокруг семян: больше — ровнее и круглее формы
-            regionSmoothPasses: 3     // сколько раз сглаживать границы (убирает зубцы и отростки; 0 — не сглаживать)
+        const options = {
+            size: 150,                // сторона карты в клетках (значения «по размеру карты» заданы для 300 и пересчитываются)
+            seed: 1
         };
+        for (const name of MapGen.PIPELINE) Object.assign(options, MapGen[name].defaults);
+        return JSON.parse(JSON.stringify(options));       // свежая копия: массивы (riverThresholds) не должны делиться между картами
     }
 
     constructor(options = {}) {
@@ -185,7 +84,7 @@ class MapGenerator {
         this.random = createRandom(seed);
         this.noise = Object.fromEntries(MapGen.NOISE_LAYERS.map((name, k) => [name, new ValueNoise(seed + k + 1)]));
         this.allocateLayers();
-        for (const step of MapGen.GENERATION_PIPELINE) this[step]();
+        for (const name of MapGen.PIPELINE) MapGen[name].build(this);
         return this;
     }
 
@@ -337,6 +236,28 @@ class MapGenerator {
         }
         return copy;
     }
-}
 
-for (const mixin of MapGen.mixins) Object.defineProperties(MapGenerator.prototype, Object.getOwnPropertyDescriptors(mixin));
+    /* ---------- Публичный интерфейс: то, чем пользуются рендерер, painter и менеджеры. Логика — в подсистемах ---------- */
+
+    applyTurnState(state) { MapGen.Turn.apply(this, state); }
+    applyEconomyState(state) { MapGen.Economy.apply(this, state); }
+    applyFactionState(state) { MapGen.Factions.apply(this, state); }
+
+    // Подписки на новое состояние; каждая возвращает функцию отписки.
+    onTurnState(listener) { return this.turnChannel.subscribe(listener); }
+    onEconomyState(listener) { return this.economyChannel.subscribe(listener); }
+    onFactionState(listener) { return this.factionChannel.subscribe(listener); }
+
+    getTileInfo(x, y) { return MapGen.Info.tile(this, x, y); }
+    getRegionInfo(regionId) { return MapGen.Info.region(this, regionId); }
+    regionTileList(regionId) { return MapGen.Info.regionTiles(this, regionId); }
+    regionGraph() { return MapGen.Info.graph(this); }
+
+    get landShare() {
+        return this.landTiles.length / (this.size * this.size);
+    }
+
+    get regionCount() {
+        return Object.keys(this.regionSizes).length;
+    }
+}

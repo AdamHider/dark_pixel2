@@ -272,6 +272,7 @@ class EconomyManager {
      - расход еды 0,4% населения за ход; если запаса хватает больше чем на 3 хода, поселения растут (до 1,5% за ход), если нет — убывают;
      - доход ресурсов: ResourceInfo.produces каждой клетки, умноженный на степень роста. */
 EconomyManager.placeholder = function placeholder(snapshot) {
+    console.log(snapshot)
     const rates = seasonGrowthRates(snapshot.season);
     const stock = { food: 0, production: 0, gold: 0, ether: 0, ...snapshot.stockpile };
     const income = { food: 0, production: 0, gold: 0, ether: 0 };

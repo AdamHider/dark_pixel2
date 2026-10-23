@@ -70,7 +70,8 @@ const cases = [
 // Статические вещи
 console.log('enums equal:', JSON.stringify([A.Terrain, A.Biome, A.Shore, A.Resource, A.ResourceInfo, A.ROAD_DIRECTIONS, A.GROWTH_STAGES]) ===
     JSON.stringify([B.Terrain, B.Biome, B.Shore, B.Resource, B.ResourceInfo, B.ROAD_DIRECTIONS, B.GROWTH_STAGES]));
-console.log('defaults equal:', JSON.stringify(A.MapGenerator.DEFAULTS) === JSON.stringify(B.MapGenerator.DEFAULTS));
+const sortKeys = o => JSON.stringify(Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1))));
+console.log('defaults equal:', sortKeys(A.MapGenerator.DEFAULTS) === sortKeys(B.MapGenerator.DEFAULTS));
 
 let bad = 0;
 for (const [opts, seed] of cases) {

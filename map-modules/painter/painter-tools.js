@@ -31,10 +31,22 @@
             return false;
         },
 
+        // Таблицы «строка/столбец пикселей -> клетка»: tileOf(k) тогда — два чтения и сложение вместо двух делений.
+        buildTileTable() {
+            const { size, T, W } = this.dim;
+            const rowBase = new Int32Array(W), column = new Int32Array(W);
+            for (let i = 0; i < W; i++) {
+                rowBase[i] = Math.floor(i / T) * size;
+                column[i] = Math.floor(i / T);
+            }
+            return { rowBase, column, W };
+        },
+
         // Клетка, в которой лежит пиксель k.
         tileOf(k) {
-            const { size, T, W } = this.dim;
-            return Math.floor(Math.floor(k / W) / T) * size + Math.floor((k % W) / T);
+            const { rowBase, column, W } = this.tileTable;
+            const y = (k / W) | 0;
+            return rowBase[y] + column[k - y * W];
         },
 
         // Температура клетки с учётом сезона: зимой холоднее, летом теплее.

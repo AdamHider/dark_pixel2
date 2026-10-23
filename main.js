@@ -292,200 +292,70 @@ function refreshFactionPanel() {
 
 /* ============================================================
    SECTION: SELECTION
-   Выделение по клику и детальное отображение региона и клетки.
+   Выделение по клику и детальное отображение через UIRenderer.
    ============================================================ */
 
-   const selectionPanel = document.getElementById('selection');
-   const ownerControls = document.getElementById('owner-controls');
+    const selectionPanel = document.getElementById('selection');
+    const ownerControls = document.getElementById('owner-controls');
+    
+    function showOwnerControls(region) {
+        ownerControls.replaceChildren();
+        if (!region || !factions || generator.factions.length === 0) {
+            ownerControls.hidden = true;
+            return;
+        }
+        ownerControls.hidden = false;
+        
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.style.width = '100%';
+        label.textContent = 'Передать регион:';
+        ownerControls.appendChild(label);
+    
+        for (const faction of generator.factions) {
+            const button = addText(ownerControls, 'button', faction.name);
+            button.type = 'button';
+            button.setAttribute('aria-pressed', region.owner === faction.id);
+            button.addEventListener('click', () => factions.claimRegion(faction.id, region.id));
+        }
+        const release = addText(ownerControls, 'button', 'Освободить');
+        release.type = 'button';
+        release.setAttribute('aria-pressed', region.owner === -1 && Object.keys(region.owners).length === 0);
+        release.addEventListener('click', () => factions.releaseRegion(region.id));
+    }
    
-   // Функция получения CSS-цвета биома для бейджа
-   function getBiomeBadgeClass(biomeName) {
-       switch (biomeName) {
-           case 'тундра': return 'biome-tundra';
-           case 'тайга': return 'biome-taiga';
-           case 'равнина': return 'biome-plains';
-           case 'степь': return 'biome-steppe';
-           case 'пустыня': return 'biome-desert';
-           case 'саванна': return 'biome-savanna';
-           default: return '';
-       }
-   }
+    function showSelection(tile, region) {
+        if (!tile) {
+            selectionPanel.hidden = true;
+            selectionPanel.replaceChildren();
+            showOwnerControls(null);
+            return;
+        }
+        
+        selectionPanel.hidden = false;
+        selectionPanel.replaceChildren();
+
+
+        if (region) {
+            // Передаем generator в качестве последнего параметра для анализа тайлов
+            const regionCardEl = uiRenderer.renderRegionCard(region, BIOME_NAMES, RESOURCE_NAMES, factionName, generator.factions, generator);
+            selectionPanel.appendChild(regionCardEl);
+        }
+        
+        const tileCardEl = uiRenderer.renderTileCard(tile, TERRAIN_NAMES, BIOME_NAMES, RESOURCE_NAMES, CROSSING_NAMES, temperatureName);
+        selectionPanel.appendChild(tileCardEl);
+        
+        showOwnerControls(region);
+    }
    
-   // Красивое HTML-описание отдельной клетки
-   function renderTileCard(tile) {
-       let kind = TERRAIN_NAMES[tile.terrain];
-       if (tile.terrain < Terrain.PLAIN) {
-           kind = `${kind} (глубина ${tile.waterDepth})`;
-       } else if (tile.terrain === Terrain.PLAIN) {
-           kind = tile.hasRiver ? `Река (глубина ${tile.riverLevel})` : BIOME_NAMES[tile.biome];
-       }
-       if (tile.crossing) kind += `, ${CROSSING_NAMES[tile.crossing]}`;
-   
-       let html = `
-       <div class="tile-card">
-           <div class="tile-card-header">
-               <span class="tile-coords">📍 Клетка (${tile.x}, ${tile.y})</span>
-               <span class="tile-kind">${kind}</span>
-           </div>
-           <div class="tile-stats-grid">
-               <div class="stat-item"><span class="stat-label">Климат</span><span class="stat-val">${temperatureName(tile.temperature)} (${Math.round(tile.temperature * 100)}%)</span></div>
-       `;
-   
-       if (tile.resource !== Resource.NONE && tile.resource !== Resource.SETTLEMENT) {
-           html += `<div class="stat-item"><span class="stat-label">Ресурс</span><span class="stat-val highlight">${RESOURCE_NAMES[tile.resource]}</span></div>`;
-       }
-       if (tile.resource === Resource.WOOD || tile.resource === Resource.WHEAT) {
-           html += `<div class="stat-item"><span class="stat-label">Рост</span><span class="stat-val">${Math.round(tile.growth * 100)}%</span></div>`;
-       }
-       if (tile.resource === Resource.SETTLEMENT) {
-           html += `<div class="stat-item"><span class="stat-label">Поселение</span><span class="stat-val">${tile.population} чел. (ур. ${tile.settlementLevel})</span></div>`;
-       }
-       if (tile.roadLevel > 0) {
-           html += `<div class="stat-item"><span class="stat-label">Инфраструктура</span><span class="stat-val">Дорога</span></div>`;
-       }
-   
-       html += `
-           </div>
-       </div>`;
-       return html;
-   }
-   
-   // Красивое HTML-описание региона с фиксированными ресурсами на первом месте
-   function renderRegionCard(region) {
-       const dominantBiome = BIOME_NAMES[region.biomes.indexOf(Math.max(...region.biomes))];
-       const biomeClass = getBiomeBadgeClass(dominantBiome);
-   
-       // Извлекаем фиксированные типы ресурсов региона (золото, еда, производство, население)
-       // region.resources хранит массив/объект количества по кодам ресурсов
-       let goldCount = 0;
-       let foodCount = 0;
-       let productionCount = 0;
-       let populationCount = region.population || 0;
-   
-       if (region.resources) {
-           // Проходим по массиву/словарю ресурсов и сопоставляем с типами
-           // Resource.WHEAT/WOOD -> еда/производство, Resource.GOLD -> золото и т.д. (настраивается под ваши индексы Resource)
-           region.resources.forEach((count, code) => {
-               if (!count || count <= 0) return;
-               const resName = RESOURCE_NAMES[code] ? RESOURCE_NAMES[code].toLowerCase() : '';
-               if (resName.includes('золот') || code === Resource.GOLD) goldCount += count;
-               if (resName.includes('пшениц') || resName.includes('дерев') || code === Resource.WHEAT || code === Resource.WOOD) foodCount += count;
-               if (resName.includes('производ') || resName.includes('желез') || code === Resource.IRON) productionCount += count;
-           });
-       }
-   
-       // Определяем владельца
-       let ownerText = '<span class="owner-neutral">Нейтральная территория</span>';
-       if (region.owner >= 0) {
-           const faction = generator.factions[region.owner];
-           ownerText = `<span class="owner-badge" style="border-color: ${faction.color}; color: ${faction.color};">👑 ${faction.name}</span>`;
-       } else if (Object.keys(region.owners).length > 0) {
-           const parts = Object.entries(region.owners).map(([id, n]) => `${factionName(Number(id))} (${n} кл.)`);
-           ownerText = `<span class="owner-partial">Оспаривается: ${parts.join(', ')}</span>`;
-       }
-   
-       return `
-       <div class="region-card">
-           <div class="region-card-header">
-               <div class="region-title-row">
-                   <span class="region-id">Регион #${region.id}</span>
-                   <span class="biome-badge ${biomeClass}">${dominantBiome}</span>
-               </div>
-               <div class="region-owner-row">
-                   ${ownerText}
-               </div>
-           </div>
-   
-           <!-- 1. ПРИОРИТЕТ: Фиксированные ресурсы региона на самом верху -->
-           <div class="region-resources-section">
-               <div class="section-subtitle">Ресурсы региона</div>
-               <div class="region-stats-grid">
-                   <div class="stat-box">
-                       <span class="stat-num">🪙 <span>${goldCount}</span></span>
-                       <span class="stat-sub">Золото</span>
-                   </div>
-                   <div class="stat-box">
-                       <span class="stat-num">🌾 <span>${foodCount}</span></span>
-                       <span class="stat-sub">Еда</span>
-                   </div>
-                   <div class="stat-box">
-                       <span class="stat-num">⚙️ <span>${productionCount}</span></span>
-                       <span class="stat-sub">Производ.</span>
-                   </div>
-                   <div class="stat-box">
-                       <span class="stat-num">👥 <span>${populationCount}</span></span>
-                       <span class="stat-sub">Население</span>
-                   </div>
-               </div>
-           </div>
-   
-           <!-- 2. ВТОРИЧНО: Площадь, рельеф, реки и море ниже -->
-           <div class="region-details-section">
-               <div class="section-subtitle">Характеристики территории</div>
-               <div class="region-meta-info">
-                   <span><b>Площадь:</b> ${region.size} кв.</span>
-                   <span><b>Горы:</b> ${region.mountains} кл.</span>
-                   <span><b>Реки:</b> ${region.riverTiles} кл.</span>
-                   ${region.coastal ? '<span class="feature-tag">🌊 Выход к морю</span>' : ''}
-               </div>
-           </div>
-       </div>
-       `;
-   }
-   
-   // Тестовое управление владением
-   function showOwnerControls(region) {
-       ownerControls.replaceChildren();
-       if (!region || !factions || generator.factions.length === 0) {
-           ownerControls.hidden = true;
-           return;
-       }
-       ownerControls.hidden = false;
-       
-       const label = document.createElement('span');
-       label.className = 'label';
-       label.style.width = '100%';
-       label.textContent = 'Передать регион:';
-       ownerControls.appendChild(label);
-   
-       for (const faction of generator.factions) {
-           const button = addText(ownerControls, 'button', faction.name);
-           button.type = 'button';
-           button.setAttribute('aria-pressed', region.owner === faction.id);
-           button.addEventListener('click', () => factions.claimRegion(faction.id, region.id));
-       }
-       const release = addText(ownerControls, 'button', 'Освободить');
-       release.type = 'button';
-       release.setAttribute('aria-pressed', region.owner === -1 && Object.keys(region.owners).length === 0);
-       release.addEventListener('click', () => factions.releaseRegion(region.id));
-   }
-   
-   function showSelection(tile, region) {
-       if (!tile) {
-           selectionPanel.hidden = true;
-           selectionPanel.innerHTML = '';
-           showOwnerControls(null);
-           return;
-       }
-       
-       selectionPanel.hidden = false;
-       let contentHtml = renderTileCard(tile);
-       if (region) {
-           contentHtml += renderRegionCard(region);
-       }
-       
-       selectionPanel.innerHTML = contentHtml;
-       showOwnerControls(region);
-   }
-   
-   renderer.onSelect = showSelection;
-   
-   function refreshSelection() {
-       const selected = renderer.selection;
-       if (!selected) return;
-       const tile = generator.getTileInfo(selected.tile.x, selected.tile.y);
-       showSelection(tile, tile && tile.regionId >= 0 ? generator.getRegionInfo(tile.regionId) : null);
-   }
+    renderer.onSelect = showSelection;
+    
+    function refreshSelection() {
+        const selected = renderer.selection;
+        if (!selected) return;
+        const tile = generator.getTileInfo(selected.tile.x, selected.tile.y);
+        showSelection(tile, tile && tile.regionId >= 0 ? generator.getRegionInfo(tile.regionId) : null);
+    }
 
 /* ============================================================
    SECTION: BUTTONS

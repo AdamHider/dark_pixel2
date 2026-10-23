@@ -58,7 +58,153 @@
            регион, которому принадлежит большинство пикселей суши в круге радиуса regionBorderSmoothing (при равенстве
            остаётся как был). Ступеньки по клеткам и прямые углы превращаются в плавные изгибы. Вода и реки не голосуют и
            не меняются, поэтому границы по-прежнему упираются в берег. Работаем только вблизи границ. */
+        /* Сглаживание границ: каждый пиксель рядом с границей (в радиусе radius) переходит к региону, за который «голосует»
+           большинство пикселей круга радиуса radius вокруг него (при равенстве остаётся свой, потом — кто встретился первым).
+           Голосование идёт по снимку, чтобы результат не зависел от порядка обхода.
+           Круг не пересчитывается заново для каждого пикселя: идя по строке, мы сдвигаем окно на пиксель (в каждой из строк круга
+           одна точка добавляется, одна убирается). Результат тот же, что у прямого перебора (smoothPixelRegionsDirect), только в разы быстрее. */
         smoothPixelRegions(owner) {
+            const radius = this.options.regionBorderSmoothing;
+            if (!radius) return owner;
+            const { W } = this.dim;
+            const total = W * W;
+
+            // круг: в строке dy точки от -half[dy] до +half[dy]
+            const half = new Int32Array(2 * radius + 1);
+            for (let dy = -radius; dy <= radius; dy++) {
+                let h = 0;
+                while ((h + 1) * (h + 1) + dy * dy <= radius * radius + 0.25) h++;
+                half[dy + radius] = h;
+            }
+
+            // 1) пиксели рядом с границей (в радиусе radius)
+            const near = new Uint8Array(total);
+            const stamp = (cx, cy) => {
+                for (let dy = -radius; dy <= radius; dy++) {
+                    const y = cy + dy;
+                    if (y < 0 || y >= W) continue;
+                    const h = half[dy + radius];
+                    near.fill(1, y * W + Math.max(0, cx - h), y * W + Math.min(W - 1, cx + h) + 1);   // пиксели вне регионов отсеем при голосовании
+                }
+            };
+            for (let k = 0; k < total; k++) {
+                const id = owner[k];
+                if (id < 0) continue;
+                const x = k % W;
+                const right = x < W - 1 ? owner[k + 1] : -1;
+                const below = k < total - W ? owner[k + W] : -1;
+                if ((right >= 0 && right !== id) || (below >= 0 && below !== id)) stamp(x, (k - x) / W);
+            }
+
+            // 2) голосование: окно (какие регионы и сколько пикселей каждого в круге)
+            const result = Int16Array.from(owner);
+            const MAX_DISTINCT = 16;                       // у прямого перебора больше 16 разных регионов в круге не учитываются
+            let maxId = 0;
+            for (let k = 0; k < total; k++) if (owner[k] > maxId) maxId = owner[k];
+            const count = new Int32Array(maxId + 1);       // сколько пикселей региона в окне
+            const active = new Int16Array((2 * radius + 1) * (2 * radius + 1) + 1);   // регионы, которые сейчас в окне
+            let distinct = 0;
+            const add = id => {
+                if (count[id]++ === 0) active[distinct++] = id;
+            };
+            const remove = id => {
+                if (--count[id] !== 0) return;
+                for (let s = 0; s < distinct; s++) {         // регион ушёл из окна: на его место — последний
+                    if (active[s] === id) { active[s] = active[--distinct]; return; }
+                }
+            };
+            const fill = (x, y) => {                       // окно с нуля
+                for (let s = 0; s < distinct; s++) count[active[s]] = 0;
+                distinct = 0;
+                for (let dy = -radius; dy <= radius; dy++) {
+                    const ny = y + dy;
+                    if (ny < 0 || ny >= W) continue;
+                    const h = half[dy + radius];
+                    for (let nx = Math.max(0, x - h); nx <= Math.min(W - 1, x + h); nx++) {
+                        const id = owner[ny * W + nx];
+                        if (id >= 0) add(id);
+                    }
+                }
+            };
+
+            for (let y = 0; y < W; y++) {
+                let inRun = false;
+                for (let x = 0; x < W; x++) {
+                    const k = y * W + x;
+                    if (!near[k] || owner[k] < 0) { inRun = false; continue; }
+
+                    if (!inRun) {
+                        fill(x, y);
+                        inRun = true;
+                    } else {                               // окно сдвинулось с (x - 1) на x
+                        for (let dy = -radius; dy <= radius; dy++) {
+                            const ny = y + dy;
+                            if (ny < 0 || ny >= W) continue;
+                            const h = half[dy + radius];
+                            const gone = x - 1 - h, came = x + h;
+                            const left = gone >= 0 ? owner[ny * W + gone] : -1;
+                            const right = came < W ? owner[ny * W + came] : -1;
+                            if (left === right) continue;    // ушёл и пришёл один регион (или оба «пустые»): окно не изменилось
+                            if (left >= 0) remove(left);
+                            if (right >= 0) add(right);
+                        }
+                    }
+
+                    // победитель: регион с наибольшим числом пикселей (строго больше, чем у своего)
+                    const own = owner[k];
+                    const ownVotes = count[own];
+                    let top = 0, topId = 0, leaders = 0;
+                    for (let s = 0; s < distinct; s++) {
+                        const votes = count[active[s]];
+                        if (votes > top) { top = votes; topId = active[s]; leaders = 1; } else if (votes === top) leaders++;
+                    }
+                    if (distinct > MAX_DISTINCT || (top > ownVotes && leaders > 1)) {
+                        // редкие случаи (много регионов или ничья): порядок «кто встретился первым» знает только прямой перебор
+                        result[k] = this.voteDirect(owner, x, y, radius, half);
+                    } else {
+                        result[k] = top > ownVotes ? topId : own;
+                    }
+                }
+            }
+            return result;
+        },
+
+        // Прямое голосование по кругу для одного пикселя: так считает smoothPixelRegionsDirect. Нужно для ничьих и «толпы» регионов.
+        voteDirect(owner, x, y, radius, half) {
+            const { W } = this.dim;
+            const ids = new Int16Array(16), votes = new Int32Array(16);
+            const own = owner[y * W + x];
+            let distinct = 0;
+            for (let dy = -radius; dy <= radius; dy++) {
+                const ny = y + dy;
+                if (ny < 0 || ny >= W) continue;
+                const h = half[dy + radius];
+                for (let dx = -h; dx <= h; dx++) {
+                    const nx = x + dx;
+                    if (nx < 0 || nx >= W) continue;
+                    const id = owner[ny * W + nx];
+                    if (id < 0) continue;
+                    let slot = 0;
+                    while (slot < distinct && ids[slot] !== id) slot++;
+                    if (slot === distinct) {
+                        if (distinct === 16) continue;
+                        ids[distinct] = id;
+                        votes[distinct] = 0;
+                        distinct++;
+                    }
+                    votes[slot]++;
+                }
+            }
+            let ownVotes = 0;
+            for (let s = 0; s < distinct; s++) if (ids[s] === own) ownVotes = votes[s];
+            let best = own, bestVotes = ownVotes;
+            for (let s = 0; s < distinct; s++) {
+                if (votes[s] > bestVotes) { best = ids[s]; bestVotes = votes[s]; }
+            }
+            return best;
+        },
+
+        smoothPixelRegionsDirect(owner) {
             const radius = this.options.regionBorderSmoothing;
             if (!radius) return owner;
             const { W } = this.dim;

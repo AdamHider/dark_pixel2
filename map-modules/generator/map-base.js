@@ -1,17 +1,18 @@
 /* ============================================================
    Генератор карты.
 
-   Структура файла:
-     1. Справочники, утилиты, шум, куча — общие инструменты без состояния.
-     2. MapGenerator — ядро: настройки, слои данных, сетка, конвейер generate(), запросы getTileInfo / getRegionInfo.
-     3. Миксины по темам: рельеф, климат, ресурсы, реки, регионы, поселения, дороги, внешнее состояние.
-        Каждый миксин — отдельный объект с методами; его можно вынести в свой файл, не меняя логику.
-
-   Новый шаг генерации = метод в подходящем миксине + строка в GENERATION_PIPELINE.
+   Структура — как в подсистемах старого проекта (MapRivers, MapLandscape...): всё поделено на объекты с одинаковым контуром.
+     • MapGenerator (map-generator.js) — ядро: слои данных, сетка, конвейер generate(), публичный интерфейс (getTileInfo...).
+     • MapGen.<Имя> — подсистема, один файл на каждую (map-relief.js, map-rivers.js...). Контур у всех один:
+           defaults    — её настройки; плоско попадают в MapGenerator.DEFAULTS, документация рядом с кодом;
+           build(map)  — единственный вход этапа генерации: шаги по порядку (у Turn / Economy / Factions вход — apply(map, state));
+           шаги        — остальные методы: свои — this.шаг(map), чужие — MapGen.Другая.шаг(map).
+       Подсистемы ничего не хранят: данные лежат слоями на самой карте (map.terrain, map.river, map.regionId...).
+   Порядок этапов — MapGen.PIPELINE (в map-generator.js). Новый этап = файл с MapGen.<Имя> + имя в PIPELINE.
 
    Глобальные имена: только прежние (Terrain, Biome, Shore, Resource, ResourceInfo, ROAD_DIRECTIONS, clamp, lerp, hash32, createRandom,
-   rankNormalize, percentile, GROWTH_STAGES, growthStage, ValueNoise, MinHeap, MapGenerator) и один неймспейс MapGen. Все новые
-   внутренние помощники живут в MapGen и в блоках { ... }: файлы грузятся обычными <script>, и общее имя легко столкнуть с чужим.
+   rankNormalize, percentile, GROWTH_STAGES, growthStage, ValueNoise, MinHeap, MapGenerator) и один неймспейс MapGen: файлы
+   грузятся обычными <script>, и общее имя легко столкнуть с чужим. Всё новое — внутри MapGen и в блоках { ... }.
    ============================================================ */
 
 /* ---------- Справочники: что может лежать в клетке карты ---------- */
@@ -34,7 +35,9 @@ const ResourceInfo = Object.freeze({
 const ROAD_DIRECTIONS = Object.freeze([[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]);
 
 /* ---------- Утилиты ---------- */
-const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, value));
+// Ограничить value отрезком [min, max]. Без Math.max/Math.min: функцию зовут миллионы раз (по несколько раз на каждый пиксель гор).
+// «+ 0» превращает -0 в +0, как это делал Math.max(0, -0); NaN остаётся NaN.
+const clamp = (value, min = 0, max = 1) => (value < min ? min : value > max ? max : value + 0);
 const lerp = (a, b, t) => a + (b - a) * t;
 
 // Степень роста клетки (леса, поля) — число от 0 до 1. На карте её видно ступенями: число деревьев в клетке, густота стеблей.
@@ -160,7 +163,6 @@ class MinHeap {
 
 /* ---------- MapGen: неймспейс внутренних помощников (в глобальной области — только он) ---------- */
 const MapGen = {
-    mixins: [],                                      // методы тем (рельеф, реки, регионы...): регистрируются в своих файлах, ставятся в MapGenerator в map-generator.js
     DIRECTIONS_8: ROAD_DIRECTIONS,
     DIRECTIONS_4: Object.freeze([[-1, 0], [1, 0], [0, -1], [0, 1]]),   // влево, вправо, вверх, вниз
     RARE_RESOURCES: new Set([Resource.GOLD, Resource.IRON, Resource.ETHER]),   // руды и эфир: их не трогаем ни дорогами, ни поселениями

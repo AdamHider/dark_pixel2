@@ -186,6 +186,18 @@ const MapPaint = {
         return top + (c + (d - c) * u - top) * v;
     },
 
+    // Отпечаток содержимого байтового массива (две 32-битные свёртки): по нему кэши узнают, что маска не изменилась.
+    fingerprint(bytes) {
+        const words = new Int32Array(bytes.buffer, bytes.byteOffset, bytes.length >> 2);
+        let h1 = 0x811c9dc5 | 0, h2 = 0x01000193 | 0;
+        for (let i = 0; i < words.length; i++) {
+            h1 = Math.imul(h1 ^ words[i], 0x01000193);
+            h2 = Math.imul(h2 + words[i], 0x85ebca6b) ^ (h2 >>> 15);
+        }
+        for (let i = words.length * 4; i < bytes.length; i++) h1 = Math.imul(h1 ^ bytes[i], 0x01000193);
+        return h1 + ':' + h2;
+    },
+
     DIRECTIONS_4: [[-1, 0], [1, 0], [0, -1], [0, 1]],   // влево, вправо, вверх, вниз
 
     GROUND_LAYERS: [['hills', 'paintHills'], ['shores', 'paintShores'], ['rivers', 'paintRivers'], ['roads', 'paintRoads'], ['settlements', 'paintSettlementGround']]
