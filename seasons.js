@@ -40,7 +40,7 @@
            tempShift: 0.02,
            growth: { forest: 0.12, wheat: 0.3 },
            palette: {
-               biome: ['#b2bfa8', '#557650', '#7fab5c', '#a9ac68', '#d1bd86', '#a5a55c'],
+               biome: ['#b2bfa8', '#557650', '#7fab5c', '#a9ac68', '#dfc790', '#d6bd82'],
                rock: '#787780',
                water: ['#58a0bd', '#4a8ba8', '#3d7592', '#325f79', '#284d63'],
                ice: ['#d9e8ee', '#c5d9e3', '#adc6d3'],
@@ -61,7 +61,7 @@
            tempShift: 0.08,
            growth: { forest: 0.1, wheat: 0.3 },
            palette: {
-               biome: ['#a9b5a4', '#4b6a47', '#6e9350', '#b3a76a', '#d0bb82', '#a99b58'],
+               biome: ['#a9b5a4', '#4b6a47', '#6e9350', '#b3a76a', '#dfc790', '#d6bd82'],
                rock: '#77757d',
                water: ['#4f95b3', '#41809e', '#346a87', '#2a566f', '#21445a'],
                ice: ['#d9e8ee', '#c5d9e3', '#adc6d3'],
@@ -82,7 +82,7 @@
            tempShift: -0.08,
            growth: { forest: 0.05, wheat: -0.45 },
            palette: {
-               biome: ['#aaa38a', '#4a6046', '#88904c', '#b8975a', '#caa877', '#a68b4e'],
+               biome: ['#aaa38a', '#4a6046', '#88904c', '#b8975a', '#d4bb84', '#c9b077'],
                rock: '#76737a',
                water: ['#4a8199', '#3d6d85', '#315971', '#28485d', '#1f394b'],
                ice: ['#d9e8ee', '#c5d9e3', '#adc6d3'],
@@ -103,7 +103,7 @@
            tempShift: -0.2,
            growth: { forest: 0.01, wheat: 0.0 },
            palette: {
-               biome: ['#c9d1d4', '#3f5847', '#7a8262', '#a3987a', '#c7b38b', '#978760'],
+               biome: ['#c9d1d4', '#3f5847', '#7a8262', '#a3987a', '#c9b996', '#baa983'],
                rock: '#6f6e78',
                water: ['#4a7a94', '#3d6780', '#31546b', '#274456', '#1e3646'],
                ice: ['#d7e6ed', '#c2d6e0', '#a9c3d1'],
@@ -142,7 +142,7 @@
            .map(v => Math.max(0, Math.min(255, Math.round(v))));
        return '#' + out.map(v => v.toString(16).padStart(2, '0')).join('');
    }
-   
+   /*
    const DARK_TONES = {
        land: { saturation: 0.55, light: 0.78, tint: [0.96, 1, 0.98] },
        rock: { saturation: 0.65, light: 0.82, tint: [0.97, 0.99, 1.02] },
@@ -154,7 +154,18 @@
        crops: { saturation: 0.5, light: 0.8, tint: [0.98, 1, 0.94] },
        litter: { saturation: 0.4, light: 0.78 }
    };
-   
+   */
+   const DARK_TONES = {
+        land: { saturation: 0.70, light: 0.85, tint: [0.98, 1, 0.99] },
+        rock: { saturation: 0.75, light: 0.88, tint: [0.98, 0.99, 1.01] },
+        water: { saturation: 0.70, light: 0.78, tint: [0.92, 0.99, 1.01] },
+        ice: { saturation: 0.70, light: 0.92, tint: [0.97, 1, 1.02] },
+        snow: { saturation: 0.60, light: 0.95, tint: [0.98, 0.99, 1.01] },
+        leaves: { saturation: 0.70, light: 0.80, tint: [0.98, 1, 0.98] },
+        wood: { saturation: 0.80, light: 0.85 },
+        crops: { saturation: 0.65, light: 0.86, tint: [0.99, 1, 0.97] },
+        litter: { saturation: 0.55, light: 0.85 }
+    };
    const DARK_EXTRA = {
        spring: { deadTreeChance: 0.3, fogStrength: 0.9 },
        summer: { deadTreeChance: 0.2, fogStrength: 0.6 },

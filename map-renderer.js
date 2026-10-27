@@ -25,6 +25,9 @@
             autoRepaint: true,     // когда перерисовывать карту после ходов: true — при смене сезона и при видимых изменениях экономики (рост лесов и полей,
                                    // уровень поселений); 'season' — только при смене сезона (изменения экономики накопятся до него); false — никогда.
                                    // Полная перерисовка тяжёлая (секунды), а видимые изменения экономики бывают почти каждый ход.
+            progressive: false,    // как рисовать карту после смены сезона, вида и т. п.: false — целиком сразу (подвисание тем больше, чем больше карта);
+                                   // true — сначала только то, что видно на экране, остальное по куску в фоне (экран обновляется во много раз быстрее)
+            chunkTiles: 32,        // размер куска карты в клетках при progressive: true (меньше — плавнее фон, но больше накладных расходов)
             cellSmoothing: 2,      // сглаживание контура выделенной ячейки: сглаживаются только мелкие ступеньки вдоль воды и границ,
                                    // а прямые линии сетки и их углы остаются строго прямыми (0 — точная форма по пикселям)
             ...options
@@ -32,6 +35,8 @@
 
         this.painter = new MapPainter(map, this.options);
         this.buffer = document.createElement('canvas'); // пока пустой; после refresh() — холст painter'а
+        this.chunks = this.options.progressive ? new MapPaint.Chunks(this.painter, this.options.chunkTiles) : null;   // что нарисовано в текущем кадре (только при progressive)
+        this.fillTimer = null;     // фоновая дорисовка оставшихся кусков
 
         this.view = 'terrain';     // 'terrain' | 'temperature' | 'regions'
         this.seasonName = 'summer';
@@ -70,6 +75,7 @@
 
     // Отписаться от карты (если рендерер больше не нужен, а карта живёт дальше).
     destroy() {
+        clearTimeout(this.fillTimer);
         for (const unsubscribe of this.unsubscribers) unsubscribe();
         this.unsubscribers = [];
     }
@@ -269,15 +275,72 @@
 
     rebuildBuffer() {
         this.rebuildScheduled = false;                 // отложенная перерисовка (после хода) больше не нужна: рисуем сейчас
-        this.buffer = this.painter.paint({ view: this.view, seasonName: this.seasonName, showBorders: this.showBorders, mood: this.mood });
+        const frame = { view: this.view, seasonName: this.seasonName, showBorders: this.showBorders, mood: this.mood };
+        if (this.chunks) {
+            this.painter.begin(frame);                 // кадр начат, но пуст: видимое дорисует draw(), остальное — фон
+            this.buffer = this.painter.canvas;
+            this.chunks.build();
+            this.scheduleFill();
+        } else {
+            this.buffer = this.painter.paint(frame);
+            this.gridLayer = this.showGrid ? this.painter.paintGrid() : null;
+        }
         if (this.options.selectionShape === 'adaptive') this.painter.buildCellMap();   // один раз на карту, ~0.1 с
-        this.gridLayer = this.showGrid ? this.painter.paintGrid() : null;
         this.factionLayerVersion = -1;            // форма территорий зависит от того, как нарисована карта — слой пересоберётся при показе
         // Форма региона и ячейки зависит от того, как нарисована карта (вид, берега) — пересчитываем контуры выделения.
         if (this.selection) {
             if (this.selection.region) this.selection.shape = this.regionShape(this.selection.region);
             this.selection.cell = this.cellShape(this.selection.tile);
         }
+    }
+
+    /* ============================================================
+       Постепенная отрисовка (progressive)
+       ============================================================ */
+
+    // Дорисовывает то, что сейчас на экране, но ещё не нарисовано в этом кадре.
+    paintVisible() {
+        if (!this.painter.dim) return;                // кадр ещё не начат (до первого refresh)
+        const { camera, canvas } = this;
+        const T = this.options.tileSize;
+        this.chunks.paint({
+            tx0: Math.floor(camera.x / T), ty0: Math.floor(camera.y / T),
+            tx1: Math.ceil((camera.x + canvas.width / camera.zoom) / T), ty1: Math.ceil((camera.y + canvas.height / camera.zoom) / T)
+        });
+    }
+
+    // Остальные куски рисуются в фоне по одному за такт: между ними браузер успевает обработать ввод и показать кадр.
+    scheduleFill() {
+        clearTimeout(this.fillTimer);
+        this.fillTimer = setTimeout(() => this.fillStep(), 0);
+    }
+
+    fillStep() {
+        this.fillTimer = null;
+        this.chunks.paintNext(this.screenCenterTile());
+        this.draw();
+        if (this.chunks.done) this.finishFrame(); else this.scheduleFill();
+    }
+
+    // Нарисовать всё сразу (например, перед снимком карты).
+    flush() {
+        clearTimeout(this.fillTimer);
+        this.fillTimer = null;
+        while (this.chunks && !this.chunks.done) this.chunks.paintNext(this.screenCenterTile());
+        if (this.chunks) this.finishFrame();
+    }
+
+    // Карта нарисована целиком: слои, которым нужна вся карта (сетка прячется под спрайтами), строятся теперь.
+    finishFrame() {
+        this.gridLayer = this.showGrid ? this.painter.paintGrid() : null;
+        this.factionLayerVersion = -1;
+        this.draw();
+    }
+
+    screenCenterTile() {
+        const { camera, canvas } = this;
+        const T = this.options.tileSize;
+        return { tx: (camera.x + canvas.width / camera.zoom / 2) / T, ty: (camera.y + canvas.height / camera.zoom / 2) / T };
     }
 
     /* ============================================================
@@ -528,6 +591,7 @@
         ctx.fillStyle = this.options.backgroundColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         if (this.buffer.width === 0) return;
+        if (this.chunks) this.paintVisible();
 
         // При отдалении сглаживаем (иначе мерцает), при приближении оставляем чёткие пиксели.
         ctx.imageSmoothingEnabled = camera.zoom < 1;

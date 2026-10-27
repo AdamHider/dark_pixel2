@@ -1,46 +1,26 @@
 /* ============================================================
-   UI RENDERER (Словарь названий биомов и ландшафтов)
+   UI RENDERER (Двухуровневая система биомов и надстроек)
    ============================================================ */
 
-   const REGION_TYPE_NAMES = {
-    // Тундра
-    'tundra': 'Тундра',
-    'alpine_tundra': 'Альпийская тундра',
-    'tundra_barrens': 'Тундровая пустошь',
-    'deep_arctic': 'Арктическая глушь',
-    'frozen_swamp': 'Ледяное болото',
+// Словари названий и прилагательных для красивой сборки названий
+const BASE_BIOME_NAMES = {
+    'plains': { name: 'Равнина', adj: 'Равнинные' },
+    'snow_plains': { name: 'Заснеженная равнина', adj: 'Заснеженные' },
+    'tundra': { name: 'Тундра', adj: 'Тундровые' },
+    'taiga': { name: 'Тайга', adj: 'Таёжные' },
+    'steppe': { name: 'Степь', adj: 'Степные' },
+    'desert': { name: 'Пустыня', adj: 'Пустынные' },
+    'savanna': { name: 'Саванна', adj: 'Саванные' }
+};
 
-    // Тайга и леса
-    'taiga': 'Тайга',
-    'dense_taiga': 'Густая тайга',
-    'forest': 'Лес',
-    'dense_forest': 'Густой лес',
-    'woodland': 'Редколесье',
-
-    // Равнины и холмы
-    'plains': 'Равнина',
-    'plateau': 'Предгорье',
-    'hills': 'Холмы',
-    'farmland': 'Плодородные земли',
-    'river_valley': 'Речная долина',
-    'river_farmland': 'Речные угодья',
-
-    // Степи
-    'steppe': 'Степь',
-    'wooded_steppe': 'Лесостепь',
-    'dry_steppe': 'Сухая степь',
-
-    // Пустыни
-    'desert': 'Пустыня',
-    'canyon': 'Скалистый каньон',
-    'scorched_desert': 'Выжженная пустыня',
-    'dunes': 'Песчаные дюны',
-    'oasis': 'Оазис',
-
-    // Саванны
-    'savanna': 'Саванна',
-    'dry_savanna': 'Сухая саванна',
-    'lush_savanna': 'Зеленая саванна'
+const MODIFIER_NAMES = {
+    'flat': '', // Без надстройки (просто базовый биом)
+    'farmland': 'плодородные земли',
+    'forest': 'густой лес',
+    'woodland': 'роща / редколесье',
+    'hills': 'холмы',
+    'mountains': 'горные массивы',
+    'oasis': 'оазис / водоём'
 };
 
 class UIRenderer {
@@ -63,12 +43,15 @@ class UIRenderer {
         return el;
     }
 
-    // Анализ региона с учетом леса, гор, рек и ресурсов
-    getRegionVisualType(region, generator) {
+    // Двухуровневый анализ региона: Базовый биом + Надстройка
+    getRegionBiomeData(region, generator) {
+        const totalTiles = region.size || 1;
+        
+        // 1. ОПРЕДЕЛЕНИЕ БАЗОВОГО БИОМА
         const dominantBiomeIndex = region.biomes.indexOf(Math.max(...region.biomes));
-        const baseBiome = ['tundra', 'taiga', 'plains', 'steppe', 'desert', 'savanna'][dominantBiomeIndex] || 'plains';
+        let baseBiome = ['tundra', 'taiga', 'plains', 'steppe', 'desert', 'savanna'][dominantBiomeIndex] || 'plains';
 
-        let totalTiles = region.size || 1;
+        // Подсчёт параметров региона
         let woodCount = 0;
         let wheatCount = 0;
         let mountainCount = region.mountains || 0;
@@ -82,15 +65,13 @@ class UIRenderer {
                 const temp = generator.temperature ? generator.temperature[tileIdx] : 0.5;
 
                 totalTemp += temp;
-                if (terrain === 3) mountainCount++;
-                if (resource === 1) woodCount++;
-                if (resource === 2) wheatCount++;
+                if (terrain === 3) mountainCount++; // Terrain.MOUNTAIN
+                if (resource === 1) woodCount++;    // Resource.WOOD
+                if (resource === 2) wheatCount++;   // Resource.WHEAT
             });
-        } else {
-            if (region.resources) {
-                woodCount = region.resources[1] || 0;
-                wheatCount = region.resources[2] || 0;
-            }
+        } else if (region.resources) {
+            woodCount = region.resources[1] || 0;
+            wheatCount = region.resources[2] || 0;
         }
 
         const avgTemp = totalTemp / totalTiles;
@@ -98,47 +79,56 @@ class UIRenderer {
         const wheatRatio = wheatCount / totalTiles;
         const mountainRatio = mountainCount / totalTiles;
         const hasRiver = riverCount > (totalTiles * 0.15);
-        // Правила комбинаций
-        if (mountainRatio > 0.6) {
-            if (baseBiome === 'tundra') return 'alpine_tundra';
-            if (baseBiome === 'desert') return 'canyon';
-            return 'plateau';
-        }
-        if (mountainRatio > 0.25) return 'hills';
 
-        if (woodRatio > 0.65) return baseBiome === 'taiga' ? 'dense_taiga' : 'dense_forest';
-        if (woodRatio > 0.4) return 'forest';
-        if (woodRatio > 0.2) return 'woodland';
-
-        if (wheatRatio > 0.15 || (baseBiome === 'plains' && wheatRatio > 0.05)) {
-            return hasRiver ? 'river_farmland' : 'farmland';
+        // Уточнение заснеженных равнин по низкой температуре
+        if (baseBiome === 'plains' && avgTemp < 0.35) {
+            baseBiome = 'tundra';
         }
 
-        if (hasRiver) {
-            if (baseBiome === 'desert') return 'oasis';
-            if (baseBiome === 'tundra' && avgTemp < 0.3) return 'frozen_swamp';
-            return 'river_valley';
+        // 2. ОПРЕДЕЛЕНИЕ НАДСТРОЙКИ (МОДИФИКАТОРА)
+        let modifier = 'flat';
+
+        if (mountainRatio > 0.35) {
+            modifier = 'mountains';
+        } else if (mountainRatio > 0.12) {
+            modifier = 'hills';
+        } else if (woodRatio > 0.35) {
+            modifier = 'forest';
+        } else if (woodRatio > 0.12) {
+            modifier = 'woodland';
+        } else if (wheatRatio > 0.08) {
+            modifier = 'farmland';
+        } else if (hasRiver && (baseBiome === 'desert' || baseBiome === 'steppe')) {
+            modifier = 'oasis';
         }
 
-        if (baseBiome === 'tundra') return avgTemp < 0.2 ? 'deep_arctic' : 'tundra_barrens';
-        if (baseBiome === 'desert') return avgTemp > 0.85 ? 'scorched_desert' : 'dunes';
-        if (baseBiome === 'steppe') return woodRatio > 0.05 ? 'wooded_steppe' : 'dry_steppe';
-        if (baseBiome === 'savanna') return hasRiver ? 'lush_savanna' : 'dry_savanna';
+        // 3. СБОРКА ИТОГОВОГО НАЗВАНИЯ И ФАЙЛА ИЗОБРАЖЕНИЯ
+        const baseData = BASE_BIOME_NAMES[baseBiome] || BASE_BIOME_NAMES['plains'];
+        const modTitle = MODIFIER_NAMES[modifier];
 
-        return baseBiome;
+        let displayName = baseData.name;
+        if (modTitle) {
+            displayName = `${baseData.adj} ${modTitle}`;
+        }
+
+        // Ключ картинки: 'desert_farmland', 'steppe_hills', 'tundra_forest' или просто 'desert'
+        const imageKey = modifier !== 'flat' ? `${baseBiome}_${modifier}` : baseBiome;
+
+        return {
+            baseBiome,
+            modifier,
+            displayName,
+            imageKey,
+            imagePath: `img/regions/${imageKey}.png`
+        };
     }
 
     renderRegionCard(region, biomeNames, resourceNames, factionNameFn, factionsList, generator) {
-        const dominantBiomeIndex = region.biomes.indexOf(Math.max(...region.biomes));
-        const baseBiomeKey = ['tundra', 'taiga', 'plains', 'steppe', 'desert', 'savanna'][dominantBiomeIndex] || 'plains';
-        
-        // Определяем детальный визуальный тип и берем название из словаря
-        const visualKey = this.getRegionVisualType(region, generator);
-        const displayName = REGION_TYPE_NAMES[visualKey] || biomeNames[dominantBiomeIndex];
-        
-        const biomeClass = this.getBiomeBadgeClass(baseBiomeKey);
-        const imagePath = `img/regions/${visualKey}.png`;
+        // Получаем сведённые данные о биоме
+        const biomeData = this.getRegionBiomeData(region, generator);
+        const biomeClass = this.getBiomeBadgeClass(biomeData.baseBiome);
 
+        // Подсчёт базовых ресурсов
         let goldCount = 0, foodCount = 0, productionCount = 0;
         let populationCount = region.population || 0;
 
@@ -152,12 +142,13 @@ class UIRenderer {
             });
         }
 
+        // Определение владельца
         let ownerElement;
         if (region.owner >= 0 && factionsList[region.owner]) {
             const faction = factionsList[region.owner];
             ownerElement = this.createElement('span', 'owner-badge', {
                 style: `border-color: ${faction.color}; color: ${faction.color};`,
-                text: `${faction.name}`
+                text: `👑 ${faction.name}`
             });
         } else if (Object.keys(region.owners).length > 0) {
             const parts = Object.entries(region.owners).map(([id, n]) => `${factionNameFn(Number(id))} (${n} кл.)`);
@@ -166,27 +157,12 @@ class UIRenderer {
             ownerElement = this.createElement('span', 'owner-neutral', { text: 'Нейтральная территория' });
         }
 
-        // Рендер баннера с картинкой и красивым названием из словаря
+        // Рендер баннера с фоном и собранным составным названием
         const bannerEl = this.createElement('div', 'region-banner', {
-            style: `background-image: url('${imagePath}');`
+            style: `background-image: url('${biomeData.imagePath}');`
         }, [
-            this.createElement('span', 'region-id', { text: `Регион #${region.id}` }),
             this.createElement('div', 'region-banner-overlay'),
-            this.createElement('span', `biome-badge ${biomeClass}`, { text: displayName })
-        ]);
-
-        const metaInfo = this.createElement('div', 'region-meta-info', {}, [
-            this.createElement('span', {}, { html: `<b>Площадь:</b> ${region.size} кв.` }),
-            this.createElement('span', {}, { html: `<b>Горы:</b> ${region.mountains} кл.` }),
-            this.createElement('span', {}, { html: `<b>Реки:</b> ${region.riverTiles} кл.` })
-        ]);
-        if (region.coastal) {
-            metaInfo.appendChild(this.createElement('span', 'feature-tag', { text: '🌊 Выход к морю' }));
-        }
-
-        const detailsSection = this.createElement('div', 'region-details-section', {}, [
-            this.createElement('div', 'section-subtitle', { text: 'Характеристики региона' }),
-            metaInfo
+            this.createElement('span', `biome-badge ${biomeClass}`, { text: biomeData.displayName })
         ]);
 
         const statsGrid = this.createElement('div', 'region-stats-grid', {}, [
@@ -201,17 +177,30 @@ class UIRenderer {
             statsGrid
         ]);
 
-       
+        const metaInfo = this.createElement('div', 'region-meta-info', {}, [
+            this.createElement('span', {}, { html: `<b>Площадь:</b> ${region.size} кв.` }),
+            this.createElement('span', {}, { html: `<b>Горы:</b> ${region.mountains} кл.` }),
+            this.createElement('span', {}, { html: `<b>Реки:</b> ${region.riverTiles} кл.` })
+        ]);
+        if (region.coastal) {
+            metaInfo.appendChild(this.createElement('span', 'feature-tag', { text: '🌊 Выход к морю' }));
+        }
+
+        const detailsSection = this.createElement('div', 'region-details-section', {}, [
+            this.createElement('div', 'section-subtitle', { text: 'Характеристики территории' }),
+            metaInfo
+        ]);
 
         return this.createElement('div', 'region-card', {}, [
             bannerEl,
             this.createElement('div', 'region-card-header', {}, [
                 this.createElement('div', 'region-title-row', {}, [
+                    this.createElement('span', 'region-id', { text: `Регион #${region.id}` }),
                     ownerElement
                 ])
             ]),
-            detailsSection,
-            resourcesSection
+            resourcesSection,
+            detailsSection
         ]);
     }
 
@@ -230,37 +219,44 @@ class UIRenderer {
             kind = tile.hasRiver ? `Река (глубина ${tile.riverLevel})` : biomeNames[tile.biome];
         }
         if (tile.crossing) kind += `, ${crossingNames[tile.crossing]}`;
-
+       
         const statsGrid = this.createElement('div', 'tile-stats-grid', {}, [
-            this.createElement('div', 'stat-item', { html: `<span class="stat-label">Климат: </span><span class="stat-val">${temperatureName(tile.temperature)}</span>` })
+            this.createElement('div', 'stat-item', { html: `<span class="stat-label">Климат</span><span class="stat-val">${temperatureName(tile.temperature)} (${this.getTemperature(tile.temperature)}°C)</span>` })
         ]);
 
         if (tile.resource !== 0 && tile.resource !== 6) {
-            statsGrid.appendChild(this.createElement('div', 'stat-item', { html: `<span class="stat-label">Ресурс: </span><span class="stat-val highlight">${resourceNames[tile.resource]}</span>` }));
+            statsGrid.appendChild(this.createElement('div', 'stat-item', { html: `<span class="stat-label">Ресурс</span><span class="stat-val highlight">${resourceNames[tile.resource]}</span>` }));
         }
         if (tile.resource === 6) {
-            statsGrid.appendChild(this.createElement('div', 'stat-item', { html: `<span class="stat-label">Поселение: </span><span class="stat-val">${tile.population} чел. (ур. ${tile.settlementLevel})</span>` }));
+            statsGrid.appendChild(this.createElement('div', 'stat-item', { html: `<span class="stat-label">Поселение</span><span class="stat-val">${tile.population} чел. (ур. ${tile.settlementLevel})</span>` }));
         }
         if (tile.roadLevel > 0) {
-            statsGrid.appendChild(this.createElement('div', 'stat-item', { html: `<span class="stat-label">Инфраструктура: </span><span class="stat-val">Дорога</span>` }));
+            statsGrid.appendChild(this.createElement('div', 'stat-item', { html: `<span class="stat-label">Инфраструктура</span><span class="stat-val">Дорога</span>` }));
         }
 
         return this.createElement('div', 'tile-card', {}, [
             this.createElement('div', 'tile-card-header', {}, [
-                this.createElement('span', 'tile-coords', { text: `${kind} (${tile.x}, ${tile.y})` }),
+                this.createElement('span', 'tile-coords', { text: `📍 Клетка (${tile.x}, ${tile.y})` }),
+                this.createElement('span', 'tile-kind', { text: kind })
             ]),
             statsGrid
         ]);
     }
 
+    getTemperature(val, minTemp = -20, maxTemp = 40) {
+        const clamped = Math.max(0, Math.min(1, val));
+        return Math.round(minTemp + clamped * (maxTemp - minTemp));
+    }
+
     getBiomeBadgeClass(biomeName) {
         switch (biomeName) {
-            case 'тундра': case 'tundra': return 'biome-tundra';
-            case 'тайга': case 'taiga': return 'biome-taiga';
-            case 'равнина': case 'plains': return 'biome-plains';
-            case 'степь': case 'steppe': return 'biome-steppe';
-            case 'пустыня': case 'desert': return 'biome-desert';
-            case 'саванна': case 'savanna': return 'biome-savanna';
+            case 'tundra': return 'biome-tundra';
+            case 'taiga': return 'biome-taiga';
+            case 'plains': return 'biome-plains';
+            case 'snow_plains': return 'biome-tundra';
+            case 'steppe': return 'biome-steppe';
+            case 'desert': return 'biome-desert';
+            case 'savanna': return 'biome-savanna';
             default: return '';
         }
     }
