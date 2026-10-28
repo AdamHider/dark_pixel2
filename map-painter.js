@@ -35,9 +35,7 @@
     window: '#f0b24a',
     fire: '#ffb347',
     fireCore: '#fff0b0',
-    chapelStone: '#8d8a85',
-    bone: '#cfc8b4',
-    crow: '#16161a'
+    chapelStone: '#8d8a85'
 };
 
 /* ============================================================
@@ -221,7 +219,7 @@ function computeHillShading({ hills, waterMask, flags, tileOfColumn, width, tile
 
 /* ============================================================
    SECTION: PIXEL_BUFFER
-   Маленький пиксельный буфер для спрайтов (дома, руды, эфир).
+   Маленький пиксельный буфер для спрайтов (дома, мельницы, руды, эфир).
    ============================================================ */
 /* Маленький пиксельный буфер для рисунков (дома, руды, эфир): прозрачный фон, рисование фигур, контур.
    Рисунок готовится один раз, а потом копируется на карту. */
@@ -1487,19 +1485,19 @@ MapPaint.Chunks = class Chunks {
 }
 
 /* ============================================================
-   Shores — берега: пляжи, галька, утёсы
+   Shores — берега: пляжи и каменистые берега
 
    Тип берега задаёт генератор (map.shore). Расстояние от воды считаем в пикселях: волной от воды вглубь суши.
      пляж       — полоса мокрого, потом сухого песка; в воде у берега белая пена;
      каменистый — галька и камни, пена послабее;
-     утёс       — суша приподнята над водой: под её краем видна каменная стенка (на юге) и тень на воде.
+     Утёсы генератора рисуются как каменистый берег (галька без стенок).
    Форма берега (какой пиксель какого вида, где пена) от сезона не зависит и считается один раз (build); при смене сезона остаётся
    только перекраска.
    ============================================================ */
 {
     MapPaint.Shores = {
         defaults: {
-            shores: true  // пляжи, каменистые берега и утёсы
+            shores: true  // пляжи и каменистые берега
         },
 
         enabled: p => p.view === 'terrain' && p.layers.shores && p.options.shores,
@@ -1513,14 +1511,13 @@ MapPaint.Chunks = class Chunks {
         /* Тип берега задаёт генератор (map.shore). Расстояние от воды считаем в пикселях: волной от воды вглубь суши.
              пляж     — полоса мокрого, потом сухого песка; в воде у берега белая пена;
              каменистый — галька и камни, пена послабее;
-             утёс     — суша приподнята над водой: под её краем видна каменная стенка (на юге) и тень на воде.
+             утёс     — рисуется как каменистый берег.
            Форма берега (какой пиксель какого вида, где пена) от сезона не зависит и считается один раз; при смене сезона
            остаётся только перекраска. */
         paint(p) {
             const geometry = this.build(p);
             this.colorShoreLand(p, geometry);
             this.paintFoam(p, geometry);
-            this.paintCliffs(p, geometry.queue, geometry.distance, geometry.kind);
         },
 
         computeShoreGeometry(p) {
@@ -1549,7 +1546,8 @@ MapPaint.Chunks = class Chunks {
             const typedTile = (tx, ty) => {
                 if (tx < 0 || ty < 0 || tx >= size || ty >= size) return 0;
                 const i = ty * size + tx;
-                return map.river[i] || !map.isLand(i) ? 0 : map.shore[i];
+                if (map.river[i] || !map.isLand(i)) return 0;
+                return map.shore[i] === Shore.CLIFF ? Shore.ROCKY : map.shore[i];   // утёс — тот же каменистый берег, без стенки
             };
             for (let ty = 0; ty < size; ty++) {
                 for (let tx = 0; tx < size; tx++) {
@@ -1678,8 +1676,6 @@ MapPaint.Chunks = class Chunks {
                     if (threshold < 1 - (d - 1) / (reach + 1)) {
                         color = variant[n] === 0 ? c.pebbleLight : variant[n] === 1 ? c.pebbleDark : mixPacked(pixels[k], c.stoneMid, 0.6);
                     }
-                } else if (type === Shore.CLIFF) {
-                    if (d <= 3 && threshold < 0.7) color = shadePacked(pixels[k], -0.2);
                 }
                 if (color !== 0) pixels[k] = color;
             });
@@ -1692,43 +1688,6 @@ MapPaint.Chunks = class Chunks {
                 if (p.seasonalTemperature(foamTiles[n]) < ICE_TEMPERATURE) return;
                 const k = foamPixels[n];
                 pixels[k] = mixPacked(pixels[k], WHITE, 0.16);
-            });
-        },
-
-        // Утёсы: суша «приподнята» — под её южным краем стенка из камня, под ней тень на воде. Идём по тем же пикселям берега,
-        // что и полоса берега (а не по клеткам), поэтому сглаженная береговая линия не рвёт обрыв на куски.
-        paintCliffs(p, queue, distance, kind) {
-            const { W } = p.dim;
-            const pixels = p.pixels;
-            const waterMask = p.waterMask;
-            const faceHeight = Math.max(3, p.px(5));
-            const rock = p.packed.rock;
-            const faceTones = [shadePacked(rock, 0.1), shadePacked(rock, -0.08), shadePacked(rock, -0.24)];
-            const bottom = p.region.y1 * W;               // стенка не выходит за нижний край области
-
-            p.eachInRegion(queue, n => {
-                const k = queue[n];
-                if (distance[k] !== 1 || kind[k] !== Shore.CLIFF) return;
-                const gx = k % W, gy = (k - gx) / W;
-
-                if (k + W < W * W && waterMask[k + W]) {                     // вода под краем: виден обрыв
-                    pixels[k] = shadePacked(pixels[k], 0.12);                 // светлая кромка
-                    for (let f = 1; f <= faceHeight; f++) {
-                        const below = k + f * W;
-                        if (below >= bottom || !waterMask[below]) break;
-                        let tone = faceTones[Math.min(2, Math.floor((f - 1) * 3 / faceHeight))];
-                        if (hashUnit(gx, gy + f, 622) < 0.2) tone = shadePacked(tone, -0.1);
-                        pixels[below] = tone;
-                        if (f === faceHeight) {
-                            for (let s = 1; s <= 2; s++) {
-                                const shadow = below + s * W;
-                                if (shadow < bottom && waterMask[shadow]) pixels[shadow] = mixPacked(pixels[shadow], BLACK, s === 1 ? 0.35 : 0.18);
-                            }
-                        }
-                    }
-                } else if ((gx > 0 && waterMask[k - 1]) || (gx < W - 1 && waterMask[k + 1])) {
-                    pixels[k] = shadePacked(pixels[k], -0.2);                 // боковая стенка
-                }
             });
         }
     };
@@ -1999,106 +1958,95 @@ MapPaint.Chunks = class Chunks {
 }
 
 /* ============================================================
-   Crossings — мосты и броды
+   Crossings — мосты
 
-   Переправы через реки (их ставит генератор, map.crossing): брод или каменный мост, повёрнутые вдоль дороги.
+   Мосты через реки (их ставит генератор, map.crossing — любое ненулевое значение): горбатый каменный мост поперёк реки.
+   Мост на клетке всегда один и всегда прямой: ось выбирается один раз (layout), поэтому «буквы Г» и звёзд из трёх дорог не бывает.
+   Если рядом (в том числе по диагонали) уже есть мост, он берёт ту же ось — мосты идут параллельно и не пересекаются.
+
+   Настил слегка выгнут вверх, под его южным краем видна каменная стенка с проёмом арки, на воде лежит тень.
    ============================================================ */
 {
+    const AXIS_ACROSS = 0.6;   // дорога годится как ось переправы, если она пересекает течение под углом не острее ~37°
+
     MapPaint.Crossings = {
         enabled: p => p.view === 'terrain' && p.layers.decorations,
 
         paint(p) {
             const { map } = p;
+            const plan = this.plan(p);
             p.forEachRegionTile((x, y) => {
-                const i = map.index(x, y);
-                if (map.crossing[i]) this.paintTile(p, x, y, i);
+                const crossing = plan.get(map.index(x, y));
+                if (crossing) this.paintBridge(p, crossing);
             });
         },
 
-        /* Переправа: каменный мост (река глубже 1) или брод из камней (ручей).
-           Мост состоит из «плеч»: от центра клетки к берегу в каждую сторону, куда идёт дорога. Прямая дорога даёт прямой мост,
-           диагональная — диагональный, поворот — мост с изгибом. Если дороги нет (случайная переправа), мост кладётся поперёк
-           течения — тоже по диагонали, если река течёт по диагонали. Длину плеча не угадываем по ширине реки, а меряем по
-           самой нарисованной реке: идём от центра, пока пиксели воды или реки не кончатся, и добавляем немного суши за берегом,
-           так что мост всегда опирается на землю с обеих сторон. */
-        paintTile(p, x, y, i) {
-            const map = p.map;
-            const { T } = p.dim;
-            const c = p.colors;
-            const { W } = p.dim;
+        /* План мостов всей карты: клетка -> { центр, ось, длина воды в обе стороны }. Не зависит от сезона, считается один раз.
+           Клетки идут по строкам; мост рядом с уже поставленным берёт его ось. */
+        plan(p) {
+            const { map } = p;
+            const deps = [map.crossing, map.roadLinks, map.river, map.riverTo, p.tileSize, p.seedSalt, p.waterKey, p.riverMask];
+            return p.memo('crossings', deps, () => {
+                const { size } = p.dim;
+                const plan = new Map();
+                for (let i = 0; i < size * size; i++) {
+                    if (!map.crossing[i]) continue;
+                    plan.set(i, this.layout(p, i, this.neighborAxis(plan, size, i)));
+                }
+                return plan;
+            });
+        },
 
-            // Центр реки в этой клетке — тот же, через который paintRivers проводит русло.
+        // Ось уже спланированного соседнего моста (или null).
+        neighborAxis(plan, size, i) {
+            const x = i % size, y = (i - x) / size;
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const other = (dx || dy) && x + dx >= 0 && x + dx < size && y + dy >= 0 && y + dy < size ? plan.get((y + dy) * size + x + dx) : null;
+                    if (other) return [other.ux, other.uy];
+                }
+            }
+            return null;
+        },
+
+        isWet(p, x, y) {
+            const { W } = p.dim;
+            if (x < 0 || y < 0 || x >= W || y >= W) return false;
+            const k = y * W + x;
+            return p.waterMask[k] === 1 || (p.riverMask !== null && p.riverMask[k] > 0);
+        },
+
+        /* Где и как лежит переправа: центр (тот же, через который Rivers проводит русло), ось (ux, uy) и сколько воды в каждую
+           сторону от центра. Длину не угадываем по ширине реки, а меряем по самой нарисованной воде: идём от центра, пока
+           пиксели воды не кончатся, — так переправа всегда достаёт до суши с обеих сторон. */
+        layout(p, i, prefer) {
+            const { size, T } = p.dim;
+            const x = i % size, y = (i - x) / size;
             const [centerX, centerY] = p.tileCenter(x, y, 983, 984, p.px(2));
             const cx = Math.round(centerX), cy = Math.round(centerY);
+            const [ux, uy] = this.axisFor(p, x, y, i, prefer);
+            const lateral = ((p.px(5) | 1) - 1) / 2;                 // половина ширины настила: берег бывает косым, меряем по нескольким линиям
 
-            const dirs = this.crossingDirections(p, x, y, i);
-            const thickness = p.px(5) | 1;                       // нечётная ширина: мост симметричен относительно центра
-            const half = (thickness - 1) / 2;
-            const overhang = Math.max(2, Math.round(T * 0.2));       // сколько моста лежит на суше за берегом
-            const cap = T;                                           // дальше одной клетки от центра не ищем берег
-
-            const riverMask = p.riverMask;
-            const wet = (px, py) => {
-                if (px < 0 || py < 0 || px >= W || py >= W) return false;
-                const k = py * W + px;
-                return p.waterMask[k] === 1 || (riverMask !== null && riverMask[k] > 0);
-            };
-            // Расстояние от центра до суши в направлении (ux, uy): наибольшее из нескольких параллельных линий по ширине моста,
-            // чтобы суши достигали и края настила, а не только его середина (берег бывает косым).
-            const reachOf = (ux, uy, lateral) => {
-                if (!riverMask) return MapPaint.Rivers.riverWidthAt(p, i) / 2;
+            const reachOf = (sx, sy) => {
+                if (!p.riverMask) return MapPaint.Rivers.riverWidthAt(p, i) / 2;
                 let reach = 0;
                 for (let j = -lateral; j <= lateral; j++) {
                     let distance = 0;
-                    while (distance < cap && wet(Math.round(cx + ux * distance - uy * j), Math.round(cy + uy * distance + ux * j))) distance += 0.5;
+                    while (distance < T && this.isWet(p, Math.round(cx + sx * distance - sy * j), Math.round(cy + sy * distance + sx * j))) distance += 0.5;
                     reach = Math.max(reach, distance);
                 }
                 return reach;
             };
 
-            if (map.crossing[i] === 2) {
-                const deck = new Set();
-                const edge = new Set();
-                for (const [ux, uy] of dirs) {
-                    const reach = reachOf(ux, uy, half) + overhang;
-                    const radius = Math.ceil(reach + half) + 1;
-                    for (let oy = -radius; oy <= radius; oy++) {
-                        for (let ox = -radius; ox <= radius; ox++) {
-                            const along = ox * ux + oy * uy;
-                            const side = Math.abs(-ox * uy + oy * ux);
-                            if (along < -half || along > reach || side > half + 0.01) continue;
-                            const px = cx + ox, py = cy + oy;
-                            if (px < 0 || py < 0 || px >= W || py >= W) continue;
-                            (side >= half - 0.5 && half > 0 ? edge : deck).add(py * W + px);
-                        }
-                    }
-                }
-                for (const k of edge) if (!deck.has(k) && p.regionHas(k)) p.pixels[k] = c.bridgeEdge;
-                for (const k of deck) if (p.regionHas(k)) p.pixels[k] = c.bridgeDeck;
-            } else {
-                for (const [ux, uy] of dirs) {
-                    const reach = reachOf(ux, uy, 0) + 1;
-                    for (let distance = 0; distance <= reach; distance += 3) {
-                        const px = Math.round(cx + ux * distance), py = Math.round(cy + uy * distance);
-                        p.rect(px - 1, py - 1, 2, 2, c.stone);
-                        p.put(px, py, c.stoneShadow);
-                    }
-                }
-            }
+            return { tile: i, cx, cy, ux, uy, front: reachOf(ux, uy), back: reachOf(-ux, -uy) };
         },
 
-        // В какие стороны идёт переправа от центра клетки (единичные векторы): по дороге, а без дороги — поперёк течения.
-        crossingDirections(p, x, y, i) {
-            const map = p.map;
+        /* Ось моста — единичный вектор, одна на клетку. Если сосед уже задал ось (prefer) и она пересекает течение — берём её. Иначе
+           берём дорогу, которая пересекает течение ближе всего к прямому углу; нет подходящей (или дороги нет вовсе) — идём строго
+           поперёк течения. Вдоль реки мост не кладём. */
+        axisFor(p, x, y, i, prefer) {
+            const { map } = p;
             const { size } = p.dim;
-
-            const roads = [];
-            for (let d = 0; d < 8; d++) {
-                if (!(map.roadLinks[i] & (1 << d))) continue;
-                const [dx, dy] = ROAD_DIRECTIONS[d];
-                const length = Math.hypot(dx, dy);
-                roads.push([dx / length, dy / length]);
-            }
 
             const to = map.riverTo[i];
             let fx, fy;
@@ -2116,12 +2064,82 @@ MapPaint.Chunks = class Chunks {
             fx /= flow;
             fy /= flow;
 
-            if (roads.length >= 2) return roads;
-            if (roads.length === 1) {                                 // дорога заканчивается на реке: мост продолжает её на другой берег
-                const [rx, ry] = roads[0];
-                if (Math.abs(rx * fx + ry * fy) < 0.8) return [[rx, ry], [-rx, -ry]];
+            const signed = axis => (axis[0] > 1e-6 || (Math.abs(axis[0]) <= 1e-6 && axis[1] > 0) ? axis : [-axis[0], -axis[1]]);   // ось без знака: «вправо» или «вниз»
+            if (prefer && Math.abs(prefer[0] * fy - prefer[1] * fx) >= AXIS_ACROSS) return signed(prefer);
+
+            let axis = [-fy, fx];                                     // поперёк течения (при диагональном течении — по диагонали)
+            let best = AXIS_ACROSS;
+            const links = map.roadLinks ? map.roadLinks[i] : 0;
+            for (let d = 0; d < 8; d++) {
+                if (!(links & (1 << d))) continue;
+                const [dx, dy] = ROAD_DIRECTIONS[d];
+                const length = Math.hypot(dx, dy);
+                const across = Math.abs((dx / length) * fy - (dy / length) * fx);   // синус угла между дорогой и течением
+                if (across > best + 1e-6) {
+                    best = across;
+                    axis = [dx / length, dy / length];
+                }
             }
-            return [[-fy, fx], [fy, -fx]];                            // поперёк течения (для диагонального течения — по диагонали)
+            return signed(axis);
+        },
+
+        /* Мост. Настил — полоса вдоль оси от суши до суши (с запасом на берегу), края — парапеты: освещённый (северо-запад) светлее,
+           теневой темнее. Настил выгнут дугой: каждый пиксель поднят вверх на lift, у концов 0, посередине — максимум. Под поднятым
+           настилом открывается стенка (первый ряд — камень, ниже — тёмный проём арки), а на воде лежит тень, смещённая на юго-восток. */
+        paintBridge(p, { cx, cy, ux, uy, front, back, tile }) {
+            const { W } = p.dim;
+            const c = p.colors;
+            const half = ((p.px(5) | 1) - 1) / 2;                    // нечётная ширина: мост симметричен относительно оси
+            const overhang = Math.max(2, Math.round(p.tileSize * 0.2));   // сколько настила лежит на суше за берегом
+            const from = -(back + overhang), to = front + overhang;
+            const mid = (from + to) / 2, radius = (to - from) / 2;
+            const arch = Math.min(p.px(3), Math.max(1, Math.round(radius * 0.2)));
+            const liftAt = s => Math.max(0, Math.round(arch * (1 - ((s - mid) / radius) ** 2)));
+
+            // 1) пиксели настила на земле (ещё без подъёма): сначала края, чтобы их не перебили внутренние отсчёты
+            const offsets = [-half, half];
+            for (let j = -half + 0.5; j < half; j += 0.5) offsets.push(j);
+            const cells = new Map();
+            for (let s = from; s <= to; s += 0.5) {
+                const lift = liftAt(s);
+                for (const j of offsets) {
+                    const x = Math.round(cx + ux * s - uy * j), y = Math.round(cy + uy * s + ux * j);
+                    if (x < 0 || y < 0 || x >= W || y >= W || cells.has(y * W + x)) continue;
+                    const edge = half > 0 && Math.abs(j) === half ? (j * (uy - ux) > 0 ? 1 : 2) : 0;   // 1 — край на свету, 2 — в тени
+                    cells.set(y * W + x, { x, y, lift, edge });
+                }
+            }
+
+            // 2) тень на воде (свет слева сверху — тень вправо и вниз)
+            for (const { x, y } of cells.values()) {
+                if (this.isWet(p, x + 1, y + 1)) p.blend(x + 1, y + 1, BLACK, 0.3);
+            }
+
+            // 3) настил, поднятый вверх; щели в один пиксель (на спуске дуги) закрываем
+            const base = p.moodize(c.bridgeDeck);
+            const shade = p.moodize(c.bridgeEdge);
+            const lit = shadePacked(base, 0.14);
+            const worn = shadePacked(base, -0.07);
+            const snow = p.snowCoverage(tile);
+            const deck = new Map();
+            for (const { x, y, lift, edge } of cells.values()) {
+                if (y - lift < 0) continue;
+                let color = edge === 1 ? lit : edge === 2 ? shade : hashUnit(x, y, 640) < 0.2 ? worn : base;
+                if (snow > 0) color = mixPacked(color, p.packed.snow, 0.6 * snow);
+                deck.set((y - lift) * W + x, color);
+            }
+            for (const [key, color] of Array.from(deck)) {
+                if (!deck.has(key + W) && deck.has(key + 2 * W)) deck.set(key + W, color);
+            }
+
+            // 4) стенка под поднятым настилом (кроме пикселей настила)
+            const faceTop = shadePacked(base, -0.3), faceHole = shadePacked(base, -0.55);
+            for (const { x, y, lift } of cells.values()) {
+                for (let r = 1; r <= lift; r++) {
+                    if (!deck.has((y - lift + r) * W + x)) p.put(x, y - lift + r, r === 1 ? faceTop : faceHole);
+                }
+            }
+            for (const [key, color] of deck) p.put(key % W, (key / W) | 0, color);
         }
     };
 }
@@ -3329,7 +3347,7 @@ MapPaint.Chunks = class Chunks {
 /* ============================================================
    Scene — сцена: горы и декорации рисуются вместе, строка за строкой сверху вниз
 
-   Декорации (деревья, дома, руды, эфир, поля, мрачные детали) собираются в список (collect: у каждого вида свой collect(p, items, ...))
+   Декорации (деревья, дома, фермы, руды, эфир) собираются в список (collect: у каждого вида свой collect(p, items, ...))
    и рисуются в порядке «основания»: тот, что южнее, рисуется позже и перекрывает северных. Горы идут теми же строками.
    ============================================================ */
 {
@@ -3367,7 +3385,7 @@ MapPaint.Chunks = class Chunks {
             const { map } = p;
             const items = [];
             const collectors = {                           // что рисовать для ресурса клетки
-                [Resource.WOOD]: MapPaint.Trees, [Resource.SETTLEMENT]: MapPaint.Settlements, [Resource.WHEAT]: MapPaint.Wheat,
+                [Resource.WOOD]: MapPaint.Trees, [Resource.SETTLEMENT]: MapPaint.Settlements, [Resource.WHEAT]: MapPaint.Farms,
                 [Resource.GOLD]: MapPaint.Ores, [Resource.IRON]: MapPaint.Ores, [Resource.ETHER]: MapPaint.Ether
             };
 
@@ -3378,7 +3396,6 @@ MapPaint.Chunks = class Chunks {
                 const collector = collectors[map.resource[i]];
                 if (collector) collector.collect(p, items, x, y, i);
             });
-            if (p.mood === 'dark' && p.options.props) MapPaint.Props.collect(p, items);
 
             items.sort((a, b) => a.y - b.y || a.x - b.x);
             return items;
@@ -3387,11 +3404,15 @@ MapPaint.Chunks = class Chunks {
 }
 
 /* ============================================================
-   Trees — деревья: лиственные, хвойные, голые
+   Trees — деревья: лиственные, хвойные, голые, пальмы и кактусы
 
-   Вид, размер и посадка зависят от биома, температуры и сезона; зимой — голые деревья и снег на хвое.
+   Вид, размер и посадка зависят от биома, температуры и сезона; зимой — голые деревья и снег на хвое. В жарких сухих биомах
+   (саванна, пустыня) вместо обычных деревьев растут пальмы и кактусы: в саванне чаще пальмы, в пустыне — кактусы.
    ============================================================ */
 {
+    // Жаркие сухие биомы: процент пальм среди деревьев (остальное — кактусы). У прочих биомов деревья обычные.
+    const PALM_SHARE = { [Biome.SAVANNA]: 65, [Biome.DESERT]: 30 };
+
     MapPaint.Trees = {
         // Два-три дерева на клетку, в случайных местах. Вид зависит от климата: в холодных краях ели, в тёплых лиственные.
         collect(p, items, x, y, i) {
@@ -3399,6 +3420,7 @@ MapPaint.Chunks = class Chunks {
             const { T } = p.dim;
             const conifer = map.biome[i] === Biome.TAIGA || map.biome[i] === Biome.TUNDRA || map.temperature[i] < 0.45;
             const withSnow = conifer && p.pal.snowOnConifers && p.seasonalTemperature(i) < SNOW_TEMPERATURE;
+            const palmShare = PALM_SHARE[map.biome[i]];            // доля пальм среди деревьев жаркого биома; у остальных биомов её нет
 
             const slots = [[0.26, 0.52], [0.74, 0.46], [0.5, 0.96]];
             const start = tileHash(x, y, 30) % slots.length;
@@ -3417,9 +3439,94 @@ MapPaint.Chunks = class Chunks {
                     y: base,
                     x: cx,
                     cover: true,
-                    draw: () => (conifer ? this.drawConifer(p, cx, base, pick, withSnow) : this.drawBroadleaf(p, cx, base, pick))
+                    draw: () => {
+                        if (palmShare !== undefined) this.drawHotTree(p, cx, base, pick, palmShare);
+                        else if (conifer) this.drawConifer(p, cx, base, pick, withSnow);
+                        else this.drawBroadleaf(p, cx, base, pick);
+                    }
                 });
             }
+        },
+
+        // Дерево жаркого биома: пальма или кактус (palmShare — процент пальм). Часть деревьев в тёмном стиле мертва, как и у лиственных.
+        drawHotTree(p, cx, base, pick, palmShare) {
+            const dead = hashUnit(cx, base, 79) < (p.pal.deadTreeChance || 0);
+            if (pick % 100 < palmShare) this.drawPalm(p, cx, base, pick, dead);
+            else this.drawCactus(p, cx, base, pick, dead);
+        },
+
+        // Пальма: слегка наклонный ствол с кольцами и крона из дугообразных листьев, свисающих вниз; свет сверху-слева.
+        drawPalm(p, cx, base, pick, dead) {
+            const pal = p.pal;
+            const lean = (pick >>> 4) % 2 ? 1 : -1;                 // в какую сторону изгибается ствол
+            const height = p.px(9) + (pick % 2);
+            const trunk = shadePacked(p.packed.trunk, 0.12);
+            const ring = shadePacked(p.packed.trunk, -0.22);
+            let frond = hexToPacked(pal.broadleaf[pick % pal.broadleaf.length]);
+            if (dead) frond = mixPacked(frond, p.packed.trunk, 0.7); // мёртвая пальма: бурые, высохшие листья
+            const light = shadePacked(frond, 0.25);
+            const dark = shadePacked(frond, -0.3);
+
+            this.drawShadow(p, cx, base, p.px(5));
+            let x = cx;                                              // ствол: вверх, на двух третях высоты сдвигается на пиксель
+            for (let h = 0; h < height; h++) {
+                if (h === Math.floor(height * 0.65)) x += lean;
+                p.put(x, base - 1 - h, h % 2 ? ring : trunk);
+            }
+
+            const crownY = base - height;
+            const reach = Math.max(2, p.px(4));
+            for (const side of [-1, 1]) {                            // листья в стороны: чем дальше от ствола, тем ниже
+                for (let k = 1; k <= reach; k++) {
+                    const droop = Math.floor((k * k) / (reach + 1)) + (dead ? 1 : 0);
+                    p.put(x + side * k, crownY - 1 + droop, side < 0 ? light : frond);
+                    if (k >= 2) p.put(x + side * k, crownY + droop, side < 0 ? frond : dark);   // толщина листа
+                }
+                p.put(x + side, crownY - 2, side < 0 ? light : frond);                          // листья вверх по диагонали
+            }
+            p.put(x, crownY - 2, light);                                                         // центр кроны
+            p.put(x, crownY - 1, frond);
+            if (!dead && hashUnit(cx, base, 78) < 0.5) {                                         // кокосы под кроной
+                p.put(x - 1, crownY + 1, p.packed.trunk);
+                p.put(x + 1, crownY + 1, p.packed.trunk);
+            }
+        },
+
+        // Кактус (сагуаро): ребристый ствол и одна-две «руки»; свет слева, в весеннем цвету — цветок на макушке.
+        drawCactus(p, cx, base, pick, dead) {
+            const pal = p.pal;
+            let body = mixPacked(hexToPacked(pal.conifer[pick % pal.conifer.length]), packRgb(112, 158, 106), 0.55);   // серо-зелёный
+            if (dead) body = mixPacked(body, p.packed.trunk, 0.65);  // мёртвый кактус: бурый
+            const light = shadePacked(body, 0.22);
+            const dark = shadePacked(body, -0.3);
+            const wide = p.px(2) >= 2 ? 2 : 1;                       // ствол в 2 пикселя шириной (в 1 — на мелких клетках)
+            const height = p.px(8) + (pick % 3);
+            const left = cx - (wide >> 1);
+
+            this.drawShadow(p, cx, base, p.px(4));
+            for (let h = 0; h < height; h++) {
+                const y = base - 1 - h;
+                for (let w = 0; w < wide; w++) {
+                    if (h === height - 1 && wide > 1 && w === 1) continue;              // скруглённая макушка
+                    let shade = wide === 1 ? body : (w === 0 ? light : dark);
+                    if (hashUnit(left + w, y, 78) < 0.14) shade = shade === dark ? body : light;   // иглы и рёбра
+                    p.put(left + w, y, shade);
+                }
+            }
+
+            // «руки»: вбок от ствола на высоте около середины, потом вверх
+            const armY = base - 1 - Math.round(height * 0.45);
+            const arms = pick % 4 === 0 ? [-1, 1] : [(pick >>> 3) % 2 ? 1 : -1];
+            const reach = Math.max(1, p.px(2));
+            const rise = Math.max(2, p.px(3));
+            for (const side of arms) {
+                const edge = side < 0 ? left - 1 : left + wide;
+                for (let k = 0; k < reach; k++) p.put(edge + side * k, armY, side < 0 ? light : body);
+                const armX = edge + side * (reach - 1) + side;
+                for (let h = 0; h < rise; h++) p.put(armX, armY - h, side < 0 ? light : dark);
+            }
+
+            if (!dead && pal.blossom && pick % 3 === 0) p.put(left, base - height - 1, hexToPacked(pal.blossom));
         },
 
         // Овальная тень под деревом.
@@ -3518,42 +3625,149 @@ MapPaint.Chunks = class Chunks {
 }
 
 /* ============================================================
-   Wheat — поля пшеницы
+   Farms — фермерские угодья: вспаханные поля, ограда, стога и ветряные мельницы
 
-   Стадия роста берётся из map.growth (ступени, см. growthStage), цвет — из сезона.
+   Клетка с ресурсом «пшеница» — участок фермы: грядки вдоль клетки (горизонтальные или вертикальные — по хешу), с южной стороны
+   жердевая ограда, иногда стог. На каждой пятой клетке стоит ветряная мельница (но не рядом с другой мельницей).
+   Стадия роста берётся из map.growth (ступени, см. growthStage), цвет — из сезона: весной ростки, летом зелёные грядки,
+   осенью золотые, зимой голая пашня со стернёй (и снегом).
    ============================================================ */
 {
-    MapPaint.Wheat = {
+    const MILL_CHANCE = 0.2;                                  // доля клеток ферм, где стоит мельница
+    const MILL_NEIGHBORS = [[-1, 0], [-1, -1], [0, -1], [1, -1]];   // уже обработанные соседи: рядом с ними мельницу не ставим
+    const CROP_DENSITY = { bare: 0.25, sprout: 0.4, growing: 0.85, ripe: 1 };
+
+    MapPaint.Farms = {
         collect(p, items, x, y) {
             const T = p.tileSize;
-            items.push({ y: y * T + Math.round(T * 0.6), x: x * T, cover: false, draw: () => this.draw(p, x, y) });
+            items.push({ y: y * T + Math.round(T * 0.6), x: x * T, cover: false, draw: () => this.drawField(p, x, y) });
+            if (this.hasMill(p, x, y)) items.push({ y: y * T + Math.round(T * 0.62), x: x * T + 1, cover: true, draw: () => this.drawMill(p, x, y) });
         },
 
-        // Поле: весной ростки, летом растёт, осенью спелые колосья, зимой стерня.
-        draw(p, x, y) {
-            const pal = p.pal;
+        isMillSite(p, x, y) {
+            const { size } = p.dim;
+            return x >= 0 && y >= 0 && x < size && y < size && p.map.resource[y * size + x] === Resource.WHEAT && hashUnit(x, y, 310) < MILL_CHANCE;
+        },
+
+        hasMill(p, x, y) {
+            return this.isMillSite(p, x, y) && !MILL_NEIGHBORS.some(([dx, dy]) => this.isMillSite(p, x + dx, y + dy));
+        },
+
+        // Участок поля: грядки (посев / ряд земли / борозда по кругу из трёх рядов), ограда на юге, иногда стог.
+        drawField(p, x, y) {
             const { T } = p.dim;
-            const stalk = hexToPacked(pal.wheatStalk);
-            const head = hexToPacked(pal.wheatTop);
-            // Густота поля: полное — 8 стеблей, неполное (экономика ещё не вырастила или уже убрала) — меньше.
-            const stage = p.map.growth ? growthStage(p.map.growth[p.map.index(x, y)]) : GROWTH_STAGES;
-            const stalks = Math.round(8 * stage / GROWTH_STAGES);
+            const c = p.colors, pal = p.pal;
+            const i = p.map.index(x, y);
+            const grown = (p.map.growth ? growthStage(p.map.growth[i]) : GROWTH_STAGES) / GROWTH_STAGES;   // 0..1: насколько поле заросло
+            const density = CROP_DENSITY[pal.wheatStage] * grown;
+            const snow = p.snowCoverage(i);
+            const snowy = color => (snow > 0 ? mixPacked(color, p.packed.snow, 0.65 * snow) : color);
+            const ridge = snowy(p.moodize(c.dirt)), soil = snowy(p.moodize(c.mud)), furrow = shadePacked(soil, -0.2);
+            const stalk = hexToPacked(pal.wheatStalk), head = hexToPacked(pal.wheatTop);
 
-            for (let k = 0; k < stalks; k++) {
-                const h = tileHash(x, y, 300 + k);
-                const sx = x * T + (h % T);
-                const sy = y * T + p.px(4) + ((h >>> 8) % (T - p.px(4)));  // основание стебля
-                const variation = (h >>> 16) % 2;
+            const inset = Math.max(1, p.px(1));
+            const left = x * T + inset, top = y * T + p.px(2);
+            const width = T - 2 * inset, height = T - p.px(3);
+            const horizontal = hashUnit(x, y, 311) < 0.5;             // грядки идут вдоль x или вдоль y
+            const length = horizontal ? width : height, depth = horizontal ? height : width;
 
-                if (pal.wheatStage === 'bare') {
-                    p.rect(sx, sy - 2, 1, 2, stalk);
-                    continue;
+            for (let v = 0; v < depth; v++) {
+                const phase = v % 3;                                     // 0 — ряд посева, 1 — земля, 2 — борозда
+                for (let u = 0; u < length; u++) {
+                    if ((u === 0 || u === length - 1) && (v === 0 || v === depth - 1)) continue;   // скруглённые углы участка
+                    const px = horizontal ? left + u : left + v, py = horizontal ? top + v : top + u;
+                    let color = phase === 2 ? furrow : phase === 1 ? soil : ridge;
+                    if (phase === 0 && hashUnit(px, py, 312) < density) color = snow > 0.5 ? snowy(stalk) : (pal.wheatStage === 'ripe' && hashUnit(px, py, 316) < 0.45 ? head : stalk);
+                    p.put(px, py, color);
                 }
-                const stalkHeight = (pal.wheatStage === 'sprout' ? p.px(2) : pal.wheatStage === 'growing' ? p.px(4) : p.px(5)) + variation;
-                p.rect(sx, sy - stalkHeight, 1, stalkHeight, stalk);
-                p.put(sx, sy - stalkHeight, head);
-                if (pal.wheatStage === 'ripe') p.put(sx, sy - stalkHeight - 1, head);
             }
+
+            if (hashUnit(x, y, 313) < 0.65) this.drawFence(p, left, top + height, width, snow);
+            if (hashUnit(x, y, 314) < 0.3 && !this.hasMill(p, x, y)) {
+                const stackX = left + p.px(2) + Math.floor(hashUnit(x, y, 317) * (width - p.px(4)));
+                this.drawHaystack(p, stackX, top + height - p.px(1), snow);
+            }
+        },
+
+        // Жердевая ограда: перекладина и столбики через три пикселя.
+        drawFence(p, left, y, width, snow) {
+            const rail = p.moodize(p.colors.plank), post = shadePacked(rail, 0.2);
+            for (let dx = 0; dx < width; dx++) {
+                p.put(left + dx, y, snow > 0 ? mixPacked(rail, p.packed.snow, 0.5 * snow) : rail);
+                if (dx % 3 === 1) p.put(left + dx, y - 1, post);
+            }
+        },
+
+        // Стог сена: небольшой холмик с тенью справа.
+        drawHaystack(p, cx, base, snow) {
+            const hay = p.moodize(p.colors.hay);
+            const top = snow > 0 ? mixPacked(shadePacked(hay, 0.15), p.packed.snow, 0.8 * snow) : shadePacked(hay, 0.15);
+            p.rect(cx - 1, base - 1, 3, 2, hay);
+            p.put(cx, base - 2, top);
+            p.put(cx - 1, base - 1, top);
+            p.put(cx + 1, base, shadePacked(hay, -0.3));
+            p.blend(cx + 2, base, BLACK, 0.3);
+            p.blend(cx + 1, base + 1, BLACK, 0.2);
+        },
+
+        // Ветряная мельница: каменная башня, крыша-конус и четыре крыла по диагоналям.
+        millSprite(p, snowLevel) {
+            const n = value => p.px1(value);
+            const c = p.colors;
+            const key = ['mill', snowLevel, p.mood, p.season.name, p.tileSize].join('|');
+            const width = n(12), height = n(15);
+
+            return p.sprite(key, width, height, c.outline, buffer => {
+                const mid = width >> 1, floor = height - 2;
+                const snow = snowLevel / 3;
+                const wall = p.moodize(c.wallA), roof = p.moodize(c.roofB);
+                const roofLit = snow > 0 ? mixPacked(roof, p.packed.snow, 0.85 * snow) : roof;
+                const roofShade = shadePacked(roofLit, -0.18);
+                const sail = packRgb(226, 216, 184), spar = p.moodize(c.plank);
+
+                // башня: сужается кверху, левая сторона на свету, правая в тени
+                const towerHeight = n(8), towerTop = floor - towerHeight + 1;
+                const bottomHalf = Math.max(2, n(5) >> 1), topHalf = Math.max(1, bottomHalf - 1);
+                for (let row = 0; row < towerHeight; row++) {
+                    const half = Math.round(topHalf + (bottomHalf - topHalf) * row / Math.max(1, towerHeight - 1));
+                    for (let dx = -half; dx <= half; dx++) {
+                        const shade = dx === -half ? 0.1 : dx === half ? -0.2 : 0;
+                        buffer.put(mid + dx, towerTop + row, hashUnit(dx, row, 318) < 0.12 ? shadePacked(wall, -0.1) : shadePacked(wall, shade));
+                    }
+                }
+                buffer.rect(mid, floor - 1, 1, 2, spar);                // дверь
+
+                // крыша-конус над башней
+                const capHeight = n(3);
+                for (let row = 0; row < capHeight; row++) {
+                    const half = Math.min(topHalf + 1, Math.round((row + 1) * (topHalf + 1) / capHeight));
+                    buffer.rect(mid - half, towerTop - capHeight + 1 + row, half * 2 + 1, 1, row === 0 ? roofLit : roofShade);
+                    buffer.put(mid - half, towerTop - capHeight + 1 + row, roofLit);
+                }
+
+                // крылья: четыре диагонали от втулки, у каждого — полотно с одной стороны
+                const hubY = towerTop + 1, reach = n(5);
+                for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+                    for (let step = 1; step <= reach; step++) {
+                        buffer.put(mid + sx * step, hubY + sy * step, spar);
+                        if (step >= 2) buffer.put(mid + sx * step - sx, hubY + sy * step, sail);
+                    }
+                }
+                buffer.put(mid, hubY, spar);
+
+                return { anchorX: mid, anchorY: floor + 1 };
+            });
+        },
+
+        drawMill(p, x, y) {
+            const { T } = p.dim;
+            const sprite = this.millSprite(p, Math.round(p.snowCoverage(p.map.index(x, y)) * 3));
+            const cx = x * T + Math.round(T / 2) + Math.round((hashUnit(x, y, 315) - 0.5) * 0.2 * T);
+            const base = y * T + Math.round(T * 0.62);
+
+            p.rect(cx - p.px(3), base - 1, p.px(6) + 1, 2, p.moodize(p.colors.dirt));       // пятачок утоптанной земли у подножия
+            MapPaint.Settlements.drawBuildingShadow(p, cx, base, p.px(4), p.px(5));
+            p.blitSprite(sprite.buffer, cx - sprite.anchorX, base - sprite.anchorY);
         }
     };
 }
@@ -3561,21 +3775,24 @@ MapPaint.Chunks = class Chunks {
 /* ============================================================
    Ores — золотая и железная руда
 
-   Каменный выступ с вкраплениями руды; золото яркое и с блёстками, железо тёмное и ржавое.
+   Небольшой каменный выступ с вкраплениями руды: золото яркое и с блёстками, железо тёмное и ржавое.
+   Стоит почти на месте клетки: гора поднимает его лишь на часть высоты рельефа.
    ============================================================ */
 {
+    const LIFT_SHARE = 0.4;   // какая часть подъёма горы под клеткой достаётся руде
+
     MapPaint.Ores = {
         collect(p, items, x, y, i) {
             const T = p.tileSize;
             const kind = p.map.resource[i] === Resource.GOLD ? 'gold' : 'iron';
-            items.push({ y: y * T + Math.round(T * 0.8), x: x * T, cover: true, draw: () => this.draw(p, x, y, kind) });
+            items.push({ y: y * T + Math.round(T * 0.72), x: x * T, cover: true, draw: () => this.draw(p, x, y, kind) });
         },
 
-        // Каменный выступ с вкраплениями руды. kind: 'gold' (золото — яркое, с блёстками) или 'iron' (железо — тёмное, ржавое).
+        // Два камня с самородками. kind: 'gold' (золото — яркое, с блёстками) или 'iron' (железо — тёмное, ржавое).
         sprite(p, kind, variant) {
             const n = value => p.px1(value);
             const gold = kind === 'gold';
-            const width = n(14), height = n(11);
+            const width = n(9), height = n(7);
 
             return p.sprite('ore|' + kind + '|' + variant, width, height, p.colors.outline, buffer => {
                 const stone = gold ? [packRgb(150, 146, 150), packRgb(114, 110, 116), packRgb(78, 74, 82)] : [packRgb(120, 132, 146), packRgb(86, 96, 108), packRgb(54, 62, 74)];
@@ -3584,24 +3801,20 @@ MapPaint.Chunks = class Chunks {
                 const oreDark = gold ? packRgb(168, 122, 20) : packRgb(98, 48, 30);
                 const mid = width >> 1, floor = height - 2;
 
-                // два-три камня разного размера
-                const rocks = [[mid - n(3), floor - n(2), n(4), n(3)], [mid + n(2), floor - n(2) - (variant % 2), n(4), n(4)], [mid - 1, floor - n(4), n(3), n(3)]];
-                for (const [cx, cy, rx, ry] of rocks) buffer.ellipse(cx, cy, rx, ry, stone[1], stone[0], stone[2]);
+                buffer.ellipse(mid - 1, floor - n(1), n(3), n(2), stone[1], stone[0], stone[2]);                    // большой камень
+                buffer.ellipse(mid + n(2), floor, n(2), n(1.5), stone[1], stone[0], stone[2]);                      // маленький рядом
 
-                // вкрапления руды: самородки на камнях (золото — крупные и яркие, железо — ржавые жилы с блеском стали)
-                const spots = gold
-                    ? [[mid - n(3), floor - n(3)], [mid + n(3), floor - n(3)], [mid, floor - n(5)], [mid + 1, floor - 1]]
-                    : [[mid - n(3), floor - n(2)], [mid + n(2), floor - n(3)], [mid, floor - n(4)], [mid - 1, floor - 1], [mid + n(4), floor - 1]];
-                spots.forEach(([sx, sy], k) => {
-                    const size = gold ? (k === 2 ? n(3) : n(2)) : n(2);
+                // самородки: один крупнее, остальные по пикселю
+                [[mid - n(2), floor - n(1), 1], [mid, floor - n(2), n(2)], [mid + n(2), floor - 1, 1]].forEach(([sx, sy, size]) => {
                     buffer.rect(sx, sy, size, size, ore);
-                    buffer.rect(sx + 1, sy + size, size, 1, oreDark);
-                    buffer.rect(sx + size, sy + 1, 1, size, oreDark);
+                    if (size > 1) {
+                        buffer.rect(sx + 1, sy + size, size, 1, oreDark);
+                        buffer.rect(sx + size, sy + 1, 1, size, oreDark);
+                    }
                     buffer.put(sx, sy, oreLight);
-                    if (!gold && k % 2 === 0) buffer.put(sx + size - 1, sy, oreLight);
                 });
 
-                return { anchorX: mid, anchorY: floor + 1, sparkles: gold ? [[mid - n(3), floor - n(4)], [mid + n(3), floor - n(4)], [mid, floor - n(6)]] : [] };
+                return { anchorX: mid, anchorY: floor + 1, sparkles: gold ? [[mid, floor - n(3)]] : [] };
             });
         },
 
@@ -3609,9 +3822,9 @@ MapPaint.Chunks = class Chunks {
             const { T } = p.dim;
             const sprite = this.sprite(p, kind, tileHash(x, y, 80) % 3);
             const cx = x * T + Math.round(T / 2) + Math.round((hashUnit(x, y, 80) - 0.5) * 0.2 * T);
-            const base = y * T + Math.round(T * 0.8) + Math.round((hashUnit(x, y, 81) - 0.5) * 0.2 * T) - MapPaint.Mountains.liftAtTile(p, x, y);
+            const base = y * T + Math.round(T * 0.72) - Math.round(MapPaint.Mountains.liftAtTile(p, x, y) * LIFT_SHARE);
 
-            MapPaint.Settlements.drawBuildingShadow(p, cx, base, p.px(7), p.px(5));
+            MapPaint.Settlements.drawBuildingShadow(p, cx, base, p.px(4), p.px(3));
             p.blitSprite(sprite.buffer, cx - sprite.anchorX, base - sprite.anchorY);
 
             // блёстки золота — в тёмном стиле светятся (рисуются после цветокоррекции)
@@ -3627,153 +3840,51 @@ MapPaint.Chunks = class Chunks {
 }
 
 /* ============================================================
-   Ether — эфир: гигантские кристаллы и грибы
+   Ether — эфир: кристалл
 
-   Светящийся ресурс: в тёмном стиле рисуется после цветокоррекции (p.emissive), чтобы оставаться ярким.
+   Приглушённый фиолетовый кристалл без свечения: рисуется как обычная декорация и в светлом, и в тёмном стиле.
    ============================================================ */
 {
     MapPaint.Ether = {
-        // Самый яркий элемент мира: в тёмном стиле рисуется после цветокоррекции (p.emissive), в светлом — как обычная декорация.
         collect(p, items, x, y) {
             const T = p.tileSize;
-            if (p.mood === 'dark') p.emissive.push(() => this.draw(p, x, y));
-            else items.push({ y: y * T + Math.round(T * 0.8), x: x * T, cover: true, draw: () => this.draw(p, x, y) });
+            items.push({ y: y * T + Math.round(T * 0.8), x: x * T, cover: true, draw: () => this.draw(p, x, y) });
         },
 
-        // Гигантские фиолетовые кристаллы (variant 0, 1) или грибы (variant 2).
-        sprite(p, variant) {
+        // Главный кристалл и два малых рядом: острые призмы, левая грань светлая, правая тёмная.
+        sprite(p) {
             const n = value => p.px1(value);
-            const width = n(16), height = n(16);
+            const width = n(11), height = n(10);
 
-            return p.sprite('ether|' + variant, width, height, packRgb(34, 14, 66), buffer => {
-                const light = packRgb(214, 170, 255), mid = packRgb(160, 90, 240), dark = packRgb(91, 42, 158), tip = packRgb(248, 232, 255);
-                const floor = height - 2;
-                const middle = width >> 1;
+            return p.sprite('ether|crystal', width, height, packRgb(46, 36, 66), buffer => {
+                const light = packRgb(178, 160, 210), mid = packRgb(138, 116, 182), dark = packRgb(94, 76, 132), tip = packRgb(214, 204, 232);
+                const floor = height - 2, middle = width >> 1;
 
-                if (variant === 2) {
-                    // гигантские грибы: светлая ножка, купол с тёмной «изнанкой» и светящимися пятнами
-                    const mushroom = (cx, stem, capW, capH) => {
-                        buffer.rect(cx - 1, floor - stem, 2, stem, packRgb(222, 206, 244));
-                        buffer.rect(cx, floor - stem, 1, stem, packRgb(176, 156, 214));
-                        const capY = floor - stem - capH + 1;
-                        buffer.ellipse(cx, capY + capH - 1, capW, capH, mid, light, dark);
-                        buffer.rect(cx - capW + 1, capY + capH - 1, capW * 2 - 1, 1, dark);   // изнанка шляпки
-                        buffer.put(cx - 1, capY + 1, tip);
-                        buffer.put(cx + 2, capY + 2, tip);
-                        buffer.put(cx - capW + 2, capY + capH - 2, tip);
-                    };
-                    mushroom(middle - n(3), n(5), n(4), n(3));
-                    mushroom(middle + n(3), n(7), n(5), n(4));
-                    mushroom(middle, n(3), n(3), n(2));
-                } else {
-                    // кристаллы: три остроконечные призмы разной высоты (левая грань светлая, правая тёмная)
-                    const crystal = (cx, crystalWidth, crystalHeight) => {
-                        for (let row = 0; row < crystalHeight; row++) {
-                            const half = Math.max(0, Math.round((crystalWidth / 2) * Math.min(1, (row + 1) / (crystalHeight * 0.7))));
-                            const y = floor - crystalHeight + 1 + row;
-                            buffer.rect(cx - half, y, half + 1, 1, light);
-                            buffer.rect(cx + 1, y, half, 1, dark);
-                            buffer.put(cx, y, mid);
-                        }
-                        buffer.put(cx, floor - crystalHeight + 1, tip);
-                    };
-                    crystal(middle - n(3), n(3), n(8));
-                    crystal(middle + n(2), n(4), n(12));
-                    crystal(middle + n(5), n(2), n(6));
-                    buffer.ellipse(middle, floor, n(6), 1, dark, mid, dark);
-                }
+                const crystal = (cx, crystalWidth, crystalHeight) => {
+                    for (let row = 0; row < crystalHeight; row++) {
+                        const half = Math.max(0, Math.round((crystalWidth / 2) * Math.min(1, (row + 1) / (crystalHeight * 0.7))));
+                        const y = floor - crystalHeight + 1 + row;
+                        buffer.rect(cx - half, y, half + 1, 1, light);
+                        buffer.rect(cx + 1, y, half, 1, dark);
+                        buffer.put(cx, y, mid);
+                    }
+                    buffer.put(cx, floor - crystalHeight + 1, tip);
+                };
+                crystal(middle, n(2), n(8));
+                crystal(middle - n(4), n(2), n(4));
+                crystal(middle + n(4), n(2), n(5));
                 return { anchorX: middle, anchorY: floor + 1 };
             });
         },
 
         draw(p, x, y) {
             const { T } = p.dim;
-            const c = p.colors;
-            const variant = tileHash(x, y, 90) % 3 === 2 ? 2 : tileHash(x, y, 90) % 2;
-            const sprite = this.sprite(p, variant);
+            const sprite = this.sprite(p);
             const cx = x * T + Math.round(T / 2) + Math.round((hashUnit(x, y, 91) - 0.5) * 0.2 * T);
-            const base = y * T + Math.round(T * 0.82) - MapPaint.Mountains.liftAtTile(p, x, y);
+            const base = y * T + Math.round(T * 0.8) - Math.round(MapPaint.Mountains.liftAtTile(p, x, y) * 0.4);
 
-            // сначала свечение (синхронно с землёй), потом сам рисунок
-            p.drawLight(cx, base - p.px(5), c.riftCore, c.riftGlow, p.px(6));
+            MapPaint.Settlements.drawBuildingShadow(p, cx, base, p.px(4), p.px(3));
             p.blitSprite(sprite.buffer, cx - sprite.anchorX, base - sprite.anchorY);
-            p.drawLight(cx, base - p.px(8), c.riftCore, c.riftGlow, p.px(3));
-        }
-    };
-}
-
-/* ============================================================
-   Props — мрачные детали тёмного стиля
-
-   Кости, вороны, развалины, виселицы: разбросаны по равнинам по хешу клетки (options.props).
-   ============================================================ */
-{
-    MapPaint.Props = {
-        defaults: {
-            props: true  // в тёмном стиле: кости, вороны, развалины, виселицы
-        },
-
-        // Кости в сухих местах, вороны, развалины, виселицы — редко и поодиночке.
-        collect(p, items) {
-            const map = p.map;
-            const { T } = p.dim;
-
-            p.forEachRegionTile((x, y) => {
-                const i = map.index(x, y);
-                if (map.terrain[i] !== Terrain.PLAIN || map.river[i] || map.resource[i] !== Resource.NONE || map.roadLevel[i] > 0) return;
-                if (map.shore[i] === Shore.BEACH) return;
-
-                const roll = hashUnit(x, y, 950 + p.seedSalt);
-                const cx = x * T + Math.round(hashUnit(x, y, 951) * (T - 2)) + 1;
-                const base = y * T + Math.round(hashUnit(x, y, 952) * (T - 4)) + 3;
-                const dry = [Biome.STEPPE, Biome.DESERT, Biome.TUNDRA, Biome.SAVANNA].includes(map.biome[i]);
-
-                if (dry && roll < 0.014) items.push({ y: base, x: cx, cover: true, draw: () => this.drawBones(p, cx, base) });
-                else if (!dry && roll < 0.006) items.push({ y: base, x: cx, cover: true, draw: () => this.drawCrow(p, cx, base) });
-                else if (roll > 0.994 && roll <= 0.9985) items.push({ y: base, x: cx, cover: true, draw: () => this.drawRuin(p, cx, base, x, y) });
-                else if (roll > 0.9985) items.push({ y: base, x: cx, cover: true, draw: () => this.drawGibbet(p, cx, base) });
-            });
-        },
-
-        drawBones(p, cx, base) {
-            const bone = p.colors.bone;
-            p.rect(cx - 2, base - 1, 5, 1, bone);
-            p.put(cx - 1, base - 2, bone);
-            p.put(cx + 1, base - 2, bone);
-            p.rect(cx + 3, base - 2, 2, 2, bone);          // череп
-            p.put(cx + 4, base - 2, p.colors.crow);      // глазница
-        },
-
-        drawCrow(p, cx, base) {
-            const dark = p.colors.crow;
-            p.rect(cx, base - 2, 3, 2, dark);
-            p.put(cx - 1, base - 2, dark);
-            p.put(cx + 1, base - 3, dark);
-            p.put(cx - 2, base - 2, p.colors.stoneMid);  // клюв
-        },
-
-        // Обломки каменной стены и колонна.
-        drawRuin(p, cx, base, tileX, tileY) {
-            const stone = p.moodize(p.colors.chapelStone);
-            const dark = shadePacked(stone, -0.25);
-            const width = p.px(8);
-            for (let dx = 0; dx < width; dx++) {
-                const height = 1 + Math.floor(hashUnit(tileX * 7 + dx, tileY, 953) * p.px(4));   // рваный верх стены
-                p.rect(cx - (width >> 1) + dx, base - height, 1, height, dx % 3 === 0 ? dark : stone);
-            }
-            p.rect(cx + (width >> 1), base - p.px(6), 2, p.px(6), stone);                   // колонна
-            p.rect(cx + (width >> 1), base - p.px(6), 1, p.px(6), shadePacked(stone, 0.15));
-            MapPaint.Trees.drawShadow(p, cx, base, width);
-        },
-
-        drawGibbet(p, cx, base) {
-            const wood = p.packed.trunk;
-            const height = p.px(10);
-            MapPaint.Trees.drawShadow(p, cx, base, p.px(4));
-            p.rect(cx, base - height, 1, height, wood);
-            p.rect(cx, base - height, p.px(5), 1, wood);
-            p.put(cx + p.px(4), base - height + 1, p.colors.stoneMid);                       // верёвка
-            p.rect(cx + p.px(4) - 1, base - height + 2, 2, p.px(3), p.colors.crow);       // силуэт
         }
     };
 }

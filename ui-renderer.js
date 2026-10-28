@@ -137,7 +137,7 @@ class UIRenderer {
                 if (!count || count <= 0) return;
                 const resName = resourceNames[code] ? resourceNames[code].toLowerCase() : '';
                 if (resName.includes('золот') || code === 3) goldCount += count;
-                if (resName.includes('пшениц') || resName.includes('дерев') || code === 1 || code === 2) foodCount += count;
+                if (resName.includes('ед') || resName.includes('дерев') || code === 1 || code === 2) foodCount += count;
                 if (resName.includes('производ') || resName.includes('желез') || code === 5) productionCount += count;
             });
         }

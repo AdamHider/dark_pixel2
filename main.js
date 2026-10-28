@@ -62,7 +62,7 @@ function connectManagers() {
 
 const TERRAIN_NAMES = ['глубокая вода', 'мелководье', 'равнина', 'гора'];
 const BIOME_NAMES = ['тундра', 'тайга', 'равнина', 'степь', 'пустыня', 'саванна'];
-const RESOURCE_NAMES = ['', 'дерево', 'пшеница', 'золотая руда', 'эфир', 'железная руда', 'поселение'];
+const RESOURCE_NAMES = ['', 'дерево', 'угодья', 'золотая руда', 'эфир', 'железная руда', 'поселение'];
 const CROSSING_NAMES = ['', 'брод', 'каменный мост'];
 const INCOME_NAMES = { food: 'еда', production: 'производство', gold: 'золото', ether: 'эфир', population: 'население' };
 

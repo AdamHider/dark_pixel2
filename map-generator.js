@@ -675,17 +675,17 @@ const MapGen = {
 }
 
 /* ============================================================
-   Crossings — переправы через реки
+   Crossings — мосты через реки
 
-   На прямых участках рек (вода входит и выходит в одном направлении) изредка ставим мост или брод.
+   На прямых участках рек (вода входит и выходит в одном направлении) изредка ставим мост; ещё мосты ставят дороги (см. Roads).
    ============================================================ */
 {
     MapGen.Crossings = {
         defaults: {
-            riverCrossingChance: 0.2  // доля подходящих прямых участков рек, где ставится мост или брод
+            riverCrossingChance: 0.1  // доля подходящих прямых участков рек, где ставится мост
         },
 
-        // Переправы: на прямых участках рек (вода входит и выходит в одном направлении) изредка ставим мост или брод.
+        // Мосты: на прямых участках рек (вода входит и выходит в одном направлении) изредка ставим мост.
         build(map) {
             const upstream = new Map();                                  // клетка -> реки, впадающие в неё
             for (const i of map.landTiles) {
@@ -704,13 +704,8 @@ const MapGen = {
                 if (ax !== bx || ay !== by) continue;                    // поворот
                 if (map.random() > map.options.riverCrossingChance) continue;
                 if (map.neighbors8(i).some(j => map.crossing[j])) continue;
-                map.crossing[i] = this.crossingFor(map, i);
+                map.crossing[i] = 1;
             }
-        },
-
-        // Тип переправы для клетки реки: брод (1) или каменный мост (2, если река глубже 1).
-        crossingFor(map, i) {
-            return map.river[i] >= 2 ? 2 : 1;
         }
     };
 }
@@ -1411,7 +1406,7 @@ const MapGen = {
         carveRoad(map, path) {
             path.forEach((tile, k) => {
                 map.roadLevel[tile] = Math.min(3, map.roadLevel[tile] + 1);
-                if (map.river[tile] > 0 && map.crossing[tile] === 0) map.crossing[tile] = MapGen.Crossings.crossingFor(map, tile);
+                if (map.river[tile] > 0 && map.crossing[tile] === 0) map.crossing[tile] = 1;
                 if (k === 0) return;
                 const previous = path[k - 1];
                 const [dx, dy] = map.delta(previous, tile);
@@ -1675,7 +1670,7 @@ MapGen.TILE_LAYERS = {
     river: [Uint8Array],                   // 0 — реки нет, 1..3 — её глубина
     riverTo: [Int32Array, -1],             // куда течёт река из этой клетки (-1 — не река или сток за краем карты)
     riverFlow: [Uint16Array],              // сколько воды проходит через клетку (определяет ширину реки)
-    crossing: [Uint8Array],                // 0 — нет, 1 — брод, 2 — каменный мост
+    crossing: [Uint8Array],                // 0 — нет, 1 — мост
     regionId: [Int16Array, -1],            // -1 — клетка вне региона (вода и реки)
     population: [Uint16Array],             // население в клетке с поселением
     settlementLevel: [Uint8Array],         // уровень клетки с поселением 1..4 (0 — нет поселения)
