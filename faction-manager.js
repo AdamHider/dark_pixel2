@@ -37,17 +37,38 @@ function factionRandom(seed) {
     };
 }
 
+// Оформление фракции: основной цвет (территория), второй цвет и флаг. Флаг — узор поля (цвета: основной и второй) и эмблема.
+const FACTION_FLAG_PATTERNS = ['pale', 'fess', 'bend', 'cross', 'saltire', 'chevron', 'stripes', 'solid'];
+const FACTION_FLAG_EMBLEMS = ['star', 'circle', 'diamond', 'tower', 'cross', 'none'];
+
+// Цвет «#rgb» или «#rrggbb» -> [r, g, b]; null, если это не цвет.
+function parseHexColor(hex) {
+    const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex || '');
+    if (!match) return null;
+    const text = match[1].length === 3 ? [...match[1]].map(c => c + c).join('') : match[1];
+    return [0, 2, 4].map(i => parseInt(text.slice(i, i + 2), 16));
+}
+
+// Второй цвет по умолчанию: к светлому основному — тёмный, к тёмному — светлый (чтобы узор флага читался).
+function contrastColor(hex) {
+    const rgb = parseHexColor(hex) || [153, 153, 153];
+    const light = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255 > 0.55;
+    const mixed = rgb.map(v => Math.round(light ? v * 0.4 : v + (255 - v) * 0.7));
+    return '#' + mixed.map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
 class FactionManager {
     static get DEFAULTS() {
         return {
             // Стартовые фракции. regions — сколько регионов: число или [мин, макс].
             factions: [
-                { name: 'Красные', color: '#d94a3a', regions: [4, 5] },
-                { name: 'Синие', color: '#3b6fd4', regions: [4, 5] },
-                { name: 'Желтые', color: '#FFDB58', regions: [4, 5] },
-                { name: 'Розовые', color: '#FFB6C1', regions: [4, 5] },
-                { name: 'Зелёные', color: '#808000', regions: [4, 5] }
+                { name: 'Красные', color: '#d94a3a', secondaryColor: '#f2d27a', flag: { pattern: 'pale', emblem: 'star' }, regions: [4, 5] },
+                { name: 'Синие', color: '#3b6fd4', secondaryColor: '#e8ecf4', flag: { pattern: 'chevron', emblem: 'tower' }, regions: [4, 5] },
+                { name: 'Желтые', color: '#FFDB58', secondaryColor: '#7a4a1c', flag: { pattern: 'fess', emblem: 'circle' }, regions: [4, 5] },
+                { name: 'Розовые', color: '#FFB6C1', secondaryColor: '#8c2f58', flag: { pattern: 'bend', emblem: 'diamond' }, regions: [4, 5] },
+                { name: 'Зелёные', color: '#808000', secondaryColor: '#e6e0a8', flag: { pattern: 'saltire', emblem: 'cross' }, regions: [4, 5] }
             ],
+            playerFaction: 0,  // какая из стартовых фракций (по номеру) — фракция игрока; null или -1 — никто
             seedDistance: 5,   // на каком расстоянии (в регионах) друг от друга стоят столицы
             attempts: 160,     // сколько раскладок перебрать при расстановке; берётся лучшая по ресурсам и равенству сторон
             coverageWeight: 20, // вес разнообразия ресурсов (дерево, поля, металл, эфир) при выборе раскладки
@@ -70,7 +91,7 @@ class FactionManager {
     // Привязать менеджер к карте (в том числе к заново сгенерированной): состояние сбрасывается и передаётся в карту.
     attach(map) {
         this.map = map;
-        this.factions = [];                                              // { id, name, color, capitalRegion, capitalTile }
+        this.factions = [];                                              // { id, name, color, secondaryColor, flag: { pattern, emblem }, capitalRegion, capitalTile, player }
         this.tileFaction = new Int16Array(map.size * map.size).fill(-1); // id фракции-владельца клетки, -1 — ничья
         this.touch('attach');
     }
@@ -105,6 +126,7 @@ class FactionManager {
         if (!state || state.format !== 1) throw new Error('Неизвестный формат состояния фракций');
         if (state.mapSeed !== this.map.seed) throw new Error('Состояние сохранено для другой карты');
         this.factions = state.factions.map(f => ({ ...f }));
+        this.options.playerFaction = this.playerFaction ? this.playerFaction.id : -1;
         this.tileFaction.fill(-1);
         for (const [faction, tiles] of Object.entries(state.owners)) for (const tile of tiles) this.tileFaction[tile] = Number(faction);
         this.touch('state');
@@ -114,11 +136,33 @@ class FactionManager {
        SECTION: CONTROL
        ============================================================ */
 
-    addFaction({ name, color } = {}) {
+    // Новая фракция из описания { name, color, secondaryColor, flag: { pattern, emblem } }: чего нет — подбирается само.
+    static makeFaction(definition, id, player = false) {
+        const color = parseHexColor(definition.color) ? definition.color : '#999999';
+        const flag = definition.flag || {};
+        return {
+            id, name: definition.name || `Фракция ${id + 1}`, color,
+            secondaryColor: parseHexColor(definition.secondaryColor) ? definition.secondaryColor : contrastColor(color),
+            flag: { pattern: flag.pattern || FACTION_FLAG_PATTERNS[id % FACTION_FLAG_PATTERNS.length], emblem: flag.emblem || FACTION_FLAG_EMBLEMS[(id * 2 + 1) % FACTION_FLAG_EMBLEMS.length] },
+            capitalRegion: -1, capitalTile: -1, player
+        };
+    }
+
+    addFaction(definition = {}) {
         const id = this.factions.length;
-        this.factions.push({ id, name: name || `Фракция ${id + 1}`, color: color || '#999999', capitalRegion: -1, capitalTile: -1 });
+        this.factions.push(FactionManager.makeFaction(definition, id));
         this.touch('add');
         return id;
+    }
+
+    // Сменить оформление фракции: любое из color, secondaryColor, flag (flag сливается с прежним).
+    setFactionStyle(factionId, { color, secondaryColor, flag } = {}) {
+        const faction = this.factions[factionId];
+        if (!faction) throw new Error(`Нет фракции ${factionId}`);
+        if (parseHexColor(color)) faction.color = color;
+        if (parseHexColor(secondaryColor)) faction.secondaryColor = secondaryColor;
+        if (flag) faction.flag = { ...faction.flag, ...flag };
+        this.touch('style');
     }
 
     // Отдаёт клетки фракции (id = -1 — освободить). Клетка — индекс; владеть можно только сушей. Возвращает, сколько клеток изменилось.
@@ -141,6 +185,14 @@ class FactionManager {
         return this.claimRegion(-1, regionId);
     }
 
+    // Фракция игрока (одна; -1 — никто). Флаг лежит на самой фракции, поэтому доходит до карты (map.factions) и попадает в сохранение.
+    setPlayerFaction(factionId) {
+        if (factionId !== -1 && !this.factions[factionId]) throw new Error(`Нет фракции ${factionId}`);
+        this.options.playerFaction = factionId;   // запоминаем: следующая generate() оставит игроком ту же фракцию
+        for (const faction of this.factions) faction.player = faction.id === factionId;
+        this.touch('player');
+    }
+
     // То же без оповещения (для пакетных изменений внутри менеджера).
     assignTiles(factionId, tiles) {
         let changed = 0;
@@ -158,6 +210,15 @@ class FactionManager {
 
     factionAt(tile) {
         return this.tileFaction[tile];
+    }
+
+    get playerFaction() {
+        return this.factions.find(f => f.player) || null;
+    }
+
+    getPlayerInfo() {
+        const faction = this.playerFaction;
+        return faction ? this.getFactionInfo(faction.id) : null;
     }
 
     getFactionTiles(factionId) {
@@ -187,7 +248,7 @@ class FactionManager {
         const map = this.map;
         const tiles = this.getFactionTiles(factionId);
         const info = {
-            id: faction.id, name: faction.name, color: faction.color,
+            id: faction.id, name: faction.name, color: faction.color, secondaryColor: faction.secondaryColor, flag: faction.flag, player: !!faction.player,
             capitalRegion: faction.capitalRegion, capitalTile: faction.capitalTile,
             tiles, size: tiles.length,
             regions: this.getFactionRegions(factionId),
@@ -252,7 +313,7 @@ class FactionManager {
         this.factions = [];
         this.tileFaction.fill(-1);
         const defs = definitions || [];
-        for (const def of defs) this.factions.push({ id: this.factions.length, name: def.name || `Фракция ${this.factions.length + 1}`, color: def.color || '#999999', capitalRegion: -1, capitalTile: -1 });
+        for (const def of defs) this.factions.push(FactionManager.makeFaction(def, this.factions.length, this.factions.length === this.options.playerFaction));
         if (defs.length === 0) {
             this.touch('generate');
             return this;

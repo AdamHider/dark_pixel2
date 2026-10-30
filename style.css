@@ -1,4 +1,3 @@
-
 /* ============================================================
    ПЕРЕМЕННЫЕ И ОСНОВА
    ============================================================ */
@@ -17,6 +16,8 @@
     --blood: #a3352a;
     --moss: #6f8a4a;
     --ether: #9b6dd6;
+    --up: #7fc46a;
+    --down: #e0604f;
     --font-pixel: 'philosopher', 'Courier New', monospace;
     --font-text: 'philosopher', 'Trebuchet MS', Verdana, sans-serif;
 }
@@ -237,6 +238,13 @@ label {
     font-weight: bold;
 }
 .res-item .val { color: var(--gold); }
+
+.res-item .delta { font-size: 11px; font-weight: 600; }
+.pos { color: var(--up); }
+.neg { color: var(--down); }
+.zero { color: var(--ink-dim); }
+
+#btn-my-faction { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 
 .nav-buttons { display: flex; gap: 4px; }
 .nav-buttons button { font-size: 12px; padding: 4px 8px; }
@@ -521,6 +529,41 @@ label {
 .faction h2 { margin: 0 0 4px; font: 10px/1 var(--font-pixel); }
 .faction p { margin: 2px 0; font-size: 12px; }
 .swatch { width: 12px; height: 12px; display: inline-block; vertical-align: middle; margin-right: 4px; }
+
+/* ФЛАГ ФРАКЦИИ */
+.flag { display: inline-flex; vertical-align: middle; line-height: 0; margin-right: 4px; flex: none; }
+.flag svg { display: block; }
+.faction h2 { display: flex; align-items: center; gap: 4px; }
+.faction h2 .flag { margin-right: 0; }
+
+/* ОКНО «МОЯ ФРАКЦИЯ» */
+.my-faction-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.my-faction-head .flag { margin: 0; }
+.my-faction-name { font-size: 18px; font-weight: 700; color: var(--gold); text-shadow: 0 2px 0 #000; }
+.my-faction-colors { display: flex; gap: 10px; margin-top: 4px; font-size: 12px; color: var(--ink-dim); }
+.color-chip { display: inline-flex; align-items: center; gap: 4px; }
+.color-chip .swatch { margin: 0; border: 1px solid var(--edge-dark); }
+.kv-list { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 14px; margin-bottom: 8px; font-size: 13px; }
+.kv-row { display: flex; justify-content: space-between; gap: 6px; border-bottom: 1px dashed #2d3742; color: var(--ink-dim); }
+.kv-row b { color: var(--ink); }
+.my-faction .region-stats-grid { grid-template-columns: repeat(5, 1fr); }
+.my-faction .group { margin-top: 8px; }
+
+/* ОКНО «ЭКОНОМИКА» */
+.eco-season { margin-bottom: 8px; font-size: 12px; color: var(--ink-dim); }
+.eco-box { margin-bottom: 8px; padding: 6px 8px; background: #12161b; border: 1px solid var(--edge-dark); border-left: 4px solid var(--edge); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05); }
+.eco-gold { border-left-color: var(--gold); }
+.eco-food { border-left-color: var(--moss); }
+.eco-production { border-left-color: var(--blood); }
+.eco-population { border-left-color: #4aa8b0; }
+.eco-title { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; font-weight: 700; }
+.eco-value { display: inline-flex; gap: 5px; align-items: baseline; color: var(--gold); white-space: nowrap; }
+.eco-value .delta { font-size: 12px; }
+.eco-details { margin-top: 4px; font-size: 12px; color: var(--ink-dim); }
+.eco-details summary { cursor: pointer; color: #74a9d8; outline: none; }
+.eco-row { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; border-bottom: 1px dashed #2d3742; padding-bottom: 2px; }
+.eco-row b { white-space: nowrap; }
+.eco-note { margin-top: 6px; font-size: 12px; color: var(--ink-dim); }
 
 /* ЗАГЛУШКИ ДЛЯ ОКОН */
 .placeholder-box {

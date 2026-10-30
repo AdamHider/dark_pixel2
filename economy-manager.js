@@ -17,6 +17,7 @@
      const economy = new EconomyManager(map, { calculate: myEconomyFunction });   // без calculate — заглушка
      turns.addPhase('economy', ctx => economy.step(ctx));                         // раз в ход
      economy.getFactionEconomy(0);                                                // запасы, доход, отчёт фракции
+     economy.predictPlayer(nextTurnContext);                                      // прогноз фракции игрока на следующий ход (ничего не меняет)
 
    Контракт функции экономики: calculate(snapshot) -> result
    ---------------------------------------------------------
@@ -24,7 +25,9 @@
      {
        turn, year, season, seasonIndex, seasonChanged,           // время игры (из контекста хода)
        faction: { id, name, color, capitalRegion, capitalTile },
-       stockpile: { food, production, gold, ether, ... },        // запасы фракции с прошлого хода
+       stockpile: { food, production, gold },                    // запасы фракции с прошлого хода
+       holdings: { army, towers },                               // армии и башни фракции
+       turnInSeason, turnsPerSeason,                             // какой по счёту ход сезона (с 0) и сколько их в сезоне
        tiles: [                                                  // все клетки фракции
          { index, x, y,
            resource,          // Resource: NONE / WOOD / WHEAT / GOLD / ETHER / IRON / SETTLEMENT
@@ -40,7 +43,8 @@
      {
        tiles: [{ index, growth?, population?, resource? }],      // growth 0..1; population — только у клеток с поселением;
                                                                  // resource — NONE / WOOD / WHEAT (лес или поле появились/исчезли)
-       stockpile: { food?, production?, gold?, ether?, ... },    // новые значения запасов (сливаются с прежними)
+       stockpile: { food?, production?, gold?, ... },            // новые значения запасов (сливаются с прежними)
+       holdings:  { army?, towers? },                            // новые армии и башни (целые числа)
        income:    { ... },                                       // доход за ход (для интерфейса и отчётов)
        report:    any                                            // любые данные для интерфейса или логов
      }
@@ -67,7 +71,9 @@ class EconomyManager {
         return {
             calculate: null,         // функция экономики фракции (см. контракт выше); null — ЗАГЛУШКА EconomyManager.placeholder
             neutralGrowth: true,     // растить леса и поля вне владений фракций по простым природным правилам
-            startStockpile: { food: 30, production: 0, gold: 0, ether: 0 }   // запасы новой фракции
+            startStockpile: { food: 40, production: 30, gold: 50 },   // запасы новой фракции (население — не запас: оно в поселениях на карте)
+            startHoldings: { army: 2, towers: 1 },                    // армии и башни новой фракции
+            turnsPerSeason: 3                                         // сколько ходов длится сезон (нужно формулам: ранняя и поздняя половина сезона)
         };
     }
 
@@ -90,7 +96,8 @@ class EconomyManager {
         this.population = Uint16Array.from(map.population);   // население клеток
         this.resource = Uint8Array.from(map.resource);        // ресурсы клеток (лес и поле могут появляться и исчезать)
         this.baseResource = Uint8Array.from(map.resource);    // ресурсы как при генерации (для сохранения)
-        this.stockpiles = {};                                  // запасы фракций: { id: { food, production, gold, ether } }
+        this.stockpiles = {};                                  // запасы фракций: { id: { food, production, gold } }
+        this.holdings = {};                                    // армии и башни фракций: { id: { army, towers } }
         this.incomes = {};                                     // доход фракций за последний ход
         this.reports = {};                                     // отчёты функции экономики за последний ход
     }
@@ -165,8 +172,10 @@ class EconomyManager {
         }
         return {
             turn: turn.turn ?? 0, year: turn.year ?? 0, season: turn.season ?? null, seasonIndex: turn.seasonIndex ?? 0, seasonChanged: !!turn.seasonChanged,
+            turnInSeason: turn.turnInSeason ?? 0, turnsPerSeason: this.options.turnsPerSeason,
             faction: { ...faction },
             stockpile: { ...this.stockpileOf(factionId) },
+            holdings: { ...this.holdingsOf(factionId) },
             tiles,
             totals: { tiles: tiles.length, population, resources },
             map
@@ -176,6 +185,11 @@ class EconomyManager {
     stockpileOf(factionId) {
         if (!this.stockpiles[factionId]) this.stockpiles[factionId] = { ...this.options.startStockpile };
         return this.stockpiles[factionId];
+    }
+
+    holdingsOf(factionId) {
+        if (!this.holdings[factionId]) this.holdings[factionId] = { ...this.options.startHoldings };
+        return this.holdings[factionId];
     }
 
     /* Проверяет результат функции экономики и применяет его к состоянию менеджера. Ошибки в данных — исключения с понятным
@@ -209,6 +223,11 @@ class EconomyManager {
             if (!Number.isFinite(value)) throw new Error(`Запас ${key} фракции ${factionId} не число`);
             stockpile[key] = value;
         }
+        const holdings = this.holdingsOf(factionId);
+        for (const [key, value] of Object.entries(result.holdings || {})) {
+            if (!Number.isInteger(value) || value < 0) throw new Error(`${key} фракции ${factionId} должно быть целым числом не меньше 0`);
+            holdings[key] = value;
+        }
         this.incomes[factionId] = result.income ? { ...result.income } : {};
         this.reports[factionId] = result.report;
     }
@@ -230,7 +249,43 @@ class EconomyManager {
 
     // Запасы, доход за последний ход и отчёт функции экономики для фракции.
     getFactionEconomy(factionId) {
-        return { stockpile: { ...this.stockpileOf(factionId) }, income: { ...(this.incomes[factionId] || {}) }, report: this.reports[factionId] };
+        return { stockpile: { ...this.stockpileOf(factionId) }, holdings: { ...this.holdingsOf(factionId) }, income: { ...(this.incomes[factionId] || {}) }, report: this.reports[factionId] };
+    }
+
+    // Id фракции игрока по флагу на карте (его ставит FactionManager.setPlayerFaction); -1, если не назначена.
+    playerId() {
+        const faction = this.map.factions.find(f => f.player);
+        return faction ? faction.id : -1;
+    }
+
+    getPlayerEconomy() {
+        const id = this.playerId();
+        return id === -1 ? null : this.getFactionEconomy(id);
+    }
+
+    /* ============================================================
+       SECTION: PREDICT
+       Прогноз на следующий ход.
+       ============================================================ */
+
+    /* Что даст step() для фракции на следующем ходу, если состояние до него не изменится. Ничего не меняет: функция экономики
+       по контракту чистая, а результат не применяется. Фракции считаются независимо друг от друга, поэтому прогноз точный.
+       nextTurn — контекст СЛЕДУЮЩЕГО хода в том виде, в каком TurnManager передаёт его в step(): { turn, year, season,
+       seasonIndex, seasonChanged } (сезон важен: осенью, например, убирают урожай). Возвращает:
+       { stockpile (запасы после хода), delta (разница с текущими), holdings, income, report, tiles (изменения клеток) }. */
+    predict(factionId, nextTurn = {}) {
+        const calculate = this.options.calculate || EconomyManager.placeholder;
+        const before = this.stockpileOf(factionId);
+        const result = calculate(this.snapshotFor(factionId, nextTurn)) || {};
+        const after = { ...before, ...(result.stockpile || {}) };
+        const delta = {};
+        for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) delta[key] = (after[key] ?? 0) - (before[key] ?? 0);
+        return { stockpile: after, delta, holdings: { ...this.holdingsOf(factionId), ...(result.holdings || {}) }, income: { ...(result.income || {}) }, report: result.report, tiles: result.tiles || [] };
+    }
+
+    predictPlayer(nextTurn) {
+        const id = this.playerId();
+        return id === -1 ? null : this.predict(id, nextTurn);
     }
 
     /* ============================================================
@@ -246,7 +301,7 @@ class EconomyManager {
             if (this.resource[i] === Resource.SETTLEMENT) population[i] = this.population[i];
             if (this.resource[i] !== this.baseResource[i]) resource[i] = this.resource[i];
         }
-        return { format: 1, mapSeed: this.map.seed, version: this.version, growth, population, resource, stockpiles: JSON.parse(JSON.stringify(this.stockpiles)) };
+        return { format: 1, mapSeed: this.map.seed, version: this.version, growth, population, resource, stockpiles: JSON.parse(JSON.stringify(this.stockpiles)), holdings: JSON.parse(JSON.stringify(this.holdings)) };
     }
 
     setState(state) {
@@ -258,6 +313,7 @@ class EconomyManager {
         for (const [tile, value] of Object.entries(state.growth)) this.growth[tile] = value;
         for (const [tile, value] of Object.entries(state.population)) this.population[tile] = value;
         this.stockpiles = JSON.parse(JSON.stringify(state.stockpiles));
+        this.holdings = JSON.parse(JSON.stringify(state.holdings || {}));
         this.push();
     }
 }
@@ -272,7 +328,6 @@ class EconomyManager {
      - расход еды 0,4% населения за ход; если запаса хватает больше чем на 3 хода, поселения растут (до 1,5% за ход), если нет — убывают;
      - доход ресурсов: ResourceInfo.produces каждой клетки, умноженный на степень роста. */
 EconomyManager.placeholder = function placeholder(snapshot) {
-    console.log(snapshot)
     const rates = seasonGrowthRates(snapshot.season);
     const stock = { food: 0, production: 0, gold: 0, ether: 0, ...snapshot.stockpile };
     const income = { food: 0, production: 0, gold: 0, ether: 0 };

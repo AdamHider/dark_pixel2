@@ -23,6 +23,36 @@ const MODIFIER_NAMES = {
     'oasis': 'оазис / водоём'
 };
 
+// Ресурсы экономики: порядок показа в верхней панели и в окне «Экономика».
+const ECONOMY_RESOURCES = [
+    { key: 'gold', icon: '🪙', name: 'Золото', title: 'Золото (казна)' },
+    { key: 'food', icon: '🌾', name: 'Еда', title: 'Еда (зернохранилище)' },
+    { key: 'production', icon: '⚙️', name: 'Производство', title: 'Производство (склад)' },
+    { key: 'population', icon: '👥', name: 'Население', title: 'Население' }
+];
+
+// Узор флага: фигура второго цвета на поле основного (флаг 30×20).
+const FLAG_PATTERNS = {
+    solid: () => '',
+    pale: c => `<rect x="15" width="15" height="20" fill="${c}"/>`,
+    fess: c => `<rect y="10" width="30" height="10" fill="${c}"/>`,
+    bend: c => `<polygon points="0,0 9,0 30,15 30,20 21,20 0,5" fill="${c}"/>`,
+    cross: c => `<rect x="11" width="6" height="20" fill="${c}"/><rect y="7" width="30" height="6" fill="${c}"/>`,
+    saltire: c => `<path d="M0 0L30 20M30 0L0 20" stroke="${c}" stroke-width="4"/>`,
+    chevron: c => `<polygon points="0,20 15,5 30,20 30,14 15,-1 0,14" fill="${c}"/>`,
+    stripes: c => `<rect y="4" width="30" height="4" fill="${c}"/><rect y="12" width="30" height="4" fill="${c}"/>`
+};
+
+// Эмблема флага по центру: второго цвета, с тёмным контуром (читается на любом фоне).
+const FLAG_EMBLEMS = {
+    none: '',
+    star: '<polygon points="15,5.5 16.9,9.3 21,9.9 18,12.8 18.7,17 15,15 11.3,17 12,12.8 9,9.9 13.1,9.3"/>',
+    circle: '<circle cx="15" cy="10" r="3.6"/>',
+    diamond: '<polygon points="15,5.5 19.5,10 15,14.5 10.5,10"/>',
+    cross: '<polygon points="13.6,5.5 16.4,5.5 16.4,8.6 19.5,8.6 19.5,11.4 16.4,11.4 16.4,14.5 13.6,14.5 13.6,11.4 10.5,11.4 10.5,8.6 13.6,8.6"/>',
+    tower: '<path d="M11.5 15.5V7.5h1.7v1.6h1.2V7.5h1.2v1.6h1.2V7.5h1.7v8z"/>'
+};
+
 class UIRenderer {
     constructor() {}
 
@@ -259,6 +289,145 @@ class UIRenderer {
             case 'savanna': return 'biome-savanna';
             default: return '';
         }
+    }
+
+    /* ============================================================
+       SECTION: PLAYER_PANEL
+       Верхняя панель ресурсов, окна «Моя фракция» и «Экономика»: наполняют готовые контейнеры из index.html.
+       Здесь только показ: данные (model) собирает main.js (buildPlayerModel), UIRenderer ничего не считает.
+       model = {
+           faction: { id, name, color, secondaryColor, flag, capitalTile },
+           resources: { gold|food|production|population: { stock, net, after, rows: [{ label, value }] } },
+           season: { name, foodMod }, holdings: { army, towers },
+           territory: { regions, tiles, settlements }, land: [{ icon, name, count }],
+           forecastLabel
+       }
+       ============================================================ */
+
+    // Число для интерфейса: до 10 — с десятой, дальше целое; signed — с «+» у положительных.
+    formatAmount(value, { signed = false } = {}) {
+        const rounded = (Math.abs(value) < 10 ? Math.round(value * 10) / 10 : Math.round(value)) || 0;   // «|| 0» убирает -0
+        const text = rounded.toLocaleString('ru-RU');
+        return signed && rounded > 0 ? `+${text}` : text;
+    }
+
+    deltaClass(value) {
+        return value > 0.05 ? 'pos' : value < -0.05 ? 'neg' : 'zero';
+    }
+
+    // Цвет из данных вставляем в разметку только если это «#rgb» или «#rrggbb».
+    safeColor(color, fallback) {
+        return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(color || '') ? color : fallback;
+    }
+
+    // Флаг фракции (SVG 3:2): поле основного цвета, узор и эмблема второго цвета.
+    renderFlag(faction, width = 30) {
+        const primary = this.safeColor(faction.color, '#999999');
+        const secondary = this.safeColor(faction.secondaryColor, '#dddddd');
+        const flag = faction.flag || {};
+        const pattern = (FLAG_PATTERNS[flag.pattern] || FLAG_PATTERNS.solid)(secondary);
+        const emblem = FLAG_EMBLEMS[flag.emblem] || '';
+        const svg = `<svg viewBox="0 0 30 20" width="${width}" height="${Math.round(width * 2 / 3)}" aria-hidden="true">`
+            + `<rect width="30" height="20" fill="${primary}"/>${pattern}`
+            + (emblem ? `<g fill="${secondary}" stroke="rgba(0,0,0,.6)" stroke-width=".7" stroke-linejoin="round">${emblem}</g>` : '')
+            + '<rect width="30" height="20" fill="none" stroke="rgba(0,0,0,.75)" stroke-width="1.2"/></svg>';
+        return this.createElement('span', 'flag', { html: svg, title: faction.name });
+    }
+
+    // Верхняя панель: запас каждого ресурса и изменение на следующий ход, например «🌾 41 (+28)».
+    renderResourcesBar(container, model) {
+        container.replaceChildren();
+        container.hidden = !model;
+        if (!model) return;
+        for (const resource of ECONOMY_RESOURCES) {
+            const { stock, net, after } = model.resources[resource.key];
+            container.appendChild(this.createElement('div', 'res-item', {
+                title: `${resource.title}: ${this.formatAmount(stock)}. Прогноз на следующий ход: ${this.formatAmount(net, { signed: true })} → ${this.formatAmount(after)}`
+            }, [
+                this.createElement('span', 'icon', { text: resource.icon }),
+                this.createElement('span', 'val', { text: this.formatAmount(stock) }),
+                this.createElement('span', `delta ${this.deltaClass(net)}`, { text: this.formatAmount(net, { signed: true }) })
+            ]));
+        }
+    }
+
+    // Кнопка «Моя фракция» в шапке: флаг рядом с названием.
+    renderMyFactionButton(button, model) {
+        for (const old of button.querySelectorAll('.flag')) old.remove();
+        if (model) button.prepend(this.renderFlag(model.faction, 20));
+    }
+
+    // Окно «Моя фракция»: флаг и цвета, территория, армии и башни, ресурсы на земле.
+    renderMyFaction(container, model, { onCapital } = {}) {
+        container.replaceChildren();
+        if (!model) {
+            container.appendChild(this.createElement('div', 'placeholder-box', { text: 'Фракция игрока не выбрана' }));
+            return;
+        }
+        const faction = model.faction;
+        const swatch = (color, text) => this.createElement('span', 'color-chip', {}, [
+            this.createElement('span', 'swatch', { style: `background: ${this.safeColor(color, '#999999')};` }),
+            this.createElement('span', '', { text })
+        ]);
+        const head = this.createElement('div', 'my-faction-head', {}, [
+            this.renderFlag(faction, 72),
+            this.createElement('div', 'my-faction-title', {}, [
+                this.createElement('div', 'my-faction-name', { text: faction.name }),
+                this.createElement('div', 'my-faction-colors', {}, [swatch(faction.color, 'основной'), swatch(faction.secondaryColor, 'второй')])
+            ])
+        ]);
+
+        const row = (label, value) => this.createElement('div', 'kv-row', {}, [this.createElement('span', '', { text: label }), this.createElement('b', '', { text: value })]);
+        const territory = this.createElement('div', 'kv-list', {}, [
+            row('Регионов', String(model.territory.regions)), row('Клеток', String(model.territory.tiles)), row('Поселений', String(model.territory.settlements)),
+            row('Население', this.formatAmount(model.resources.population.stock)),
+            row('Армий', String(model.holdings.army)), row('Башен', String(model.holdings.towers))
+        ]);
+
+        const land = this.createElement('div', 'region-stats-grid', {}, model.land.map(item => this.createStatBox(`${item.icon} ${item.count}`, item.name)));
+
+        container.append(head,
+            this.createElement('div', 'section-subtitle', { text: 'Территория' }), territory,
+            this.createElement('div', 'section-subtitle', { text: 'Ресурсы на земле' }), land);
+        if (faction.capitalTile >= 0 && onCapital) {
+            const button = this.createElement('button', '', { type: 'button', text: 'К столице' });
+            button.addEventListener('click', onCapital);
+            container.appendChild(this.createElement('div', 'group', {}, [button]));
+        }
+    }
+
+    // Окно «Экономика»: по каждому ресурсу запас и прогноз на следующий ход («40 (+2 → 42)») и раскрывающаяся разбивка прихода и расхода.
+    renderEconomy(container, model) {
+        const opened = new Set([...container.querySelectorAll('details[open]')].map(d => d.dataset.key));   // раскрытые разбивки переживают перерисовку
+        container.replaceChildren();
+        if (!model) {
+            container.appendChild(this.createElement('div', 'placeholder-box', { text: 'Фракция игрока не выбрана' }));
+            return;
+        }
+        container.appendChild(this.createElement('div', 'eco-season', { text: model.forecastLabel }));
+
+        for (const resource of ECONOMY_RESOURCES) {
+            const { stock, net, after, rows } = model.resources[resource.key];
+            const details = this.createElement('details', 'eco-details', { 'data-key': resource.key }, [
+                this.createElement('summary', '', { text: 'Приход и расход' }),
+                ...rows.map(r => this.createElement('div', 'eco-row', {}, [
+                    this.createElement('span', '', { text: r.label }),
+                    this.createElement('b', this.deltaClass(r.value), { text: this.formatAmount(r.value, { signed: true }) })
+                ]))
+            ]);
+            details.open = opened.has(resource.key);
+            container.appendChild(this.createElement('div', `eco-box eco-${resource.key}`, {}, [
+                this.createElement('div', 'eco-title', {}, [
+                    this.createElement('span', '', { text: `${resource.icon} ${resource.title}` }),
+                    this.createElement('span', 'eco-value', {}, [
+                        this.createElement('span', '', { text: this.formatAmount(stock) }),
+                        this.createElement('span', `delta ${this.deltaClass(net)}`, { text: `(${this.formatAmount(net, { signed: true })} → ${this.formatAmount(after)})` })
+                    ])
+                ]),
+                details
+            ]));
+        }
+        container.appendChild(this.createElement('div', 'eco-note', { text: `Армий: ${model.holdings.army} · Башен: ${model.holdings.towers}` }));
     }
 }
 

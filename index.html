@@ -26,21 +26,12 @@
 
 <!-- ===================== ВЕРХНЯЯ ПАНЕЛЬ (ГОЛОВА) ===================== -->
 <header class="topbar frame">
-    <div class="brand">
-        <h1>Тёмные Земли</h1>
-    </div>
-
-    <!-- Ресурсы (заглушка) -->
-    <div class="resources-bar">
-        <div class="res-item" title="Золото"><span class="icon">🪙</span><span class="val">1,250</span></div>
-        <div class="res-item" title="Еда"><span class="icon">🌾</span><span class="val">+45</span></div>
-        <div class="res-item" title="Производство"><span class="icon">⚙️</span><span class="val">18</span></div>
-        <div class="res-item" title="Население"><span class="icon">👥</span><span class="val">12.4k</span></div>
-    </div>
+    <button id="btn-my-faction">Моя фракция</button>
+    <!-- Ресурсы фракции игрока: золото, еда, производство, население (наполняет main.js, см. SECTION: PLAYER) -->
+    <div class="resources-bar" id="resources-bar" hidden></div>
 
     <!-- Кнопки вызова окон -->
     <div class="nav-buttons">
-        <button id="btn-my-faction">Моя фракция</button>
         <button id="btn-diplomacy">Дипломатия</button>
         <button id="btn-economy">Экономика</button>
         <button id="btn-map-settings" aria-pressed="true">Карта</button>
@@ -95,23 +86,13 @@
         <!-- 3. Моя Фракция (Заглушка) -->
         <section id="win-my-faction" hidden>
             <h2 class="panel-title">Моя Фракция</h2>
-            <div class="placeholder-box">
-                <p><b>Королевство Ворн</b></p>
-                <p>Правитель: Лорд Морган</p>
-                <p>Стабильность: 85%</p>
-                <p>Военная мощь: 1,420</p>
-            </div>
+            <div id="my-faction" class="my-faction"></div>
         </section>
 
         <!-- 4. Экономика (Заглушка) -->
         <section id="win-economy" hidden>
             <h2 class="panel-title">Экономика</h2>
-            <div class="placeholder-box">
-                <p>Налоги: 12% (+140g)</p>
-                <p>Содержание армии: -80g</p>
-                <p>Торговые пути: 3 / 5</p>
-                <p>Чистый доход: +60g / ход</p>
-            </div>
+            <div id="economy" class="economy"></div>
         </section>
 
         <!-- 5. Детали Выбранного Региона -->
@@ -163,6 +144,7 @@
 <script src="faction-manager.js"></script>
 <script src="turn-manager.js"></script>
 <script src="economy-manager.js"></script>
+<script src="faction-economy.js"></script>
 <script src="ui-renderer.js"></script>
 <script src="main.js"></script>
 
@@ -177,7 +159,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'btn-region': document.getElementById('win-region')
     };
 
-    const buttons = document.querySelectorAll('.nav-buttons button');
+    const buttons = document.querySelectorAll('.nav-buttons button, #btn-my-faction');   // «Моя фракция» стоит вне .nav-buttons
 
     function openWindow(activeBtnId) {
         Object.keys(windows).forEach(btnId => {

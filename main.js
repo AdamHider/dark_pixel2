@@ -11,7 +11,7 @@
      MapRenderer    — показывает карту и сам реагирует на изменения: меняет сезон, перерисовывает карту, рисует границы фракций.
    ============================================================ */
    const generator = new MapGenerator({
-    size: 180,
+    size: 120,
     // shapeVariety: 1,       // 0..1: изрезанность континента (заливы, полуострова)
     // islandDensity: 0.8,    // 0..1: больше островов
     // inlandSeaStrength: 0.5,// внутренние моря
@@ -34,23 +34,23 @@ const info = document.getElementById('info');
 
 const TURNS_PER_SEASON = 3;                         // сколько ходов длится сезон
 const START_FACTIONS = [                            // стартовые фракции: regions — сколько регионов (число или [мин, макс])
-    { name: 'Красные', color: '#d94a3a', regions: [4, 5] },
-    { name: 'Синие', color: '#3b6fd4', regions: [4, 5] }
-];
+    { name: 'Красные', color: '#d94a3a', secondaryColor: '#f2d27a', flag: { pattern: 'pale', emblem: 'star' }, regions: [4, 5] },
+    { name: 'Синие', color: '#3b6fd4', secondaryColor: '#e8ecf4', flag: { pattern: 'chevron', emblem: 'tower' }, regions: [4, 5] }
+];   // secondaryColor и flag можно не указывать: подберутся сами (см. FactionManager.makeFaction)
 
 let factions = null, turns = null, economy = null;  // создаются после первой генерации (см. connectManagers)
 
 function connectManagers() {
     factions = new FactionManager(generator, { factions: START_FACTIONS });
-    // Когда будет готова настоящая экономика: new EconomyManager(generator, { calculate: calculateFactionEconomy })
-    // (контракт функции описан в начале economy-manager.js). Пока работает заглушка.
-    economy = new EconomyManager(generator);
+    // Математика экономики — faction-economy.js (из симулятора dpresources.html); контракт функции — в начале economy-manager.js.
+    economy = new EconomyManager(generator, { calculate: calculateFactionEconomy, ...FactionEconomy.managerOptions(TURNS_PER_SEASON) });
     turns = new TurnManager(generator, { turnsPerSeason: TURNS_PER_SEASON });   // порядок сезонов — SEASON_ORDER из seasons.js
     turns.addPhase('economy', context => economy.step(context));                 // экономика считается раз в ход
 
     turns.onTurn(onTurnDone);
     factions.onChange(() => {
         refreshFactionPanel();
+        refreshPlayerUI();
         refreshSelection();
     });
 }
@@ -63,8 +63,8 @@ function connectManagers() {
 const TERRAIN_NAMES = ['глубокая вода', 'мелководье', 'равнина', 'гора'];
 const BIOME_NAMES = ['тундра', 'тайга', 'равнина', 'степь', 'пустыня', 'саванна'];
 const RESOURCE_NAMES = ['', 'дерево', 'угодья', 'золотая руда', 'эфир', 'железная руда', 'поселение'];
-const CROSSING_NAMES = ['', 'брод', 'каменный мост'];
-const INCOME_NAMES = { food: 'еда', production: 'производство', gold: 'золото', ether: 'эфир', population: 'население' };
+const CROSSING_NAMES = ['', 'мост', 'мост'];
+const INCOME_NAMES = { food: 'еда', production: 'производство', gold: 'золото', population: 'население' };
 
 function temperatureName(t) {
     if (t < 0.25) return 'холодно';
@@ -128,7 +128,9 @@ function refreshTurnStatus() {
 // Конец каждого хода (в том числе когда ходов сыграно сразу несколько).
 function onTurnDone() {
     refreshTurnStatus();
+    checkForecast();
     refreshFactionPanel();
+    refreshPlayerUI();
     refreshSelection();
 }
 
@@ -217,6 +219,7 @@ function buildMap() {
     //showStats();
     refreshTurnStatus();
     refreshFactionPanel();
+    refreshPlayerUI();
 }
 
 renderer.onHover = tile => {
@@ -261,10 +264,7 @@ function refreshFactionPanel() {
         row.className = 'faction';
 
         const title = document.createElement('h2');
-        const swatch = document.createElement('span');
-        swatch.className = 'swatch';
-        swatch.style.background = faction.color;
-        title.append(swatch, faction.name);
+        title.append(uiRenderer.renderFlag(faction, 24), (faction.player ? ' ★ ' : ' ') + faction.name);
         row.appendChild(title);
 
         const whole = summary.regions.filter(r => r.full).length;
@@ -278,16 +278,96 @@ function refreshFactionPanel() {
         const income = numbersLine(money.income, INCOME_NAMES, { signed: true });
         if (income) addText(row, 'p', `Доход за ход: ${income}`);
 
+        if (!faction.player) {
+            const choose = addText(row, 'button', 'Играть за них');
+            choose.type = 'button';
+            choose.addEventListener('click', () => factions.setPlayerFaction(faction.id));
+        }
         if (faction.capitalTile >= 0) {
             const button = addText(row, 'button', 'К столице');
             button.type = 'button';
-            button.addEventListener('click', () => {
-                const size = generator.size, tileSize = renderer.options.tileSize;
-                renderer.centerOn((faction.capitalTile % size + 0.5) * tileSize, (Math.floor(faction.capitalTile / size) + 0.5) * tileSize);
-            });
+            button.addEventListener('click', () => centerOnCapital(faction));
         }
         factionPanel.appendChild(row);
     }
+}
+
+/* ============================================================
+   SECTION: PLAYER
+   Моя фракция: верхняя панель ресурсов и окна «Моя фракция» и «Экономика» (контейнеры — из index.html).
+   Данные собирает buildPlayerModel, показывает UIRenderer. Прогноз на следующий ход — economy.predict: та же функция
+   экономики, что считает ход, но без применения результата.
+   ============================================================ */
+
+const resourcesBar = document.getElementById('resources-bar');
+const myFactionButton = document.getElementById('btn-my-faction');
+const myFactionPanel = document.getElementById('my-faction');
+const economyPanel = document.getElementById('economy');
+
+// Ресурсы на земле для окна «Моя фракция»: код ресурса карты, значок, подпись.
+const LAND_RESOURCES = [
+    [Resource.WHEAT, '🌾', 'Пашни'], [Resource.WOOD, '🌲', 'Лес'], [Resource.IRON, '⛏️', 'Железо'], [Resource.ETHER, '🔮', 'Эфир'], [Resource.GOLD, '🪙', 'Золото']
+];
+
+let lastForecast = null;    // { turn, stockpile }: что мы обещали на ход turn — для самопроверки в checkForecast
+
+function centerOnCapital(faction) {
+    const size = generator.size, tileSize = renderer.options.tileSize;
+    renderer.centerOn((faction.capitalTile % size + 0.5) * tileSize, (Math.floor(faction.capitalTile / size) + 0.5) * tileSize);
+}
+
+// Контекст СЛЕДУЮЩЕГО хода: то, что TurnManager передаст в economy.step(), когда ход будет сыгран.
+function nextTurnContext() {
+    const now = turns.calendar();
+    const next = turns.calendar(turns.turn + 1);
+    return { ...next, seasonIndex: next.seasonIndex ?? turns.options.seasons.indexOf(next.season), seasonChanged: next.season !== now.season };
+}
+
+function buildPlayerModel() {
+    const player = factions && economy ? factions.playerFaction : null;
+    if (!player) return null;
+
+    const context = nextTurnContext();
+    const next = economy.predict(player.id, context);
+    const now = economy.getFactionEconomy(player.id);
+    const info = factions.getFactionInfo(player.id);
+    const rows = FactionEconomy.breakdown(next.report);
+
+    // Население хранится в поселениях на карте, а не в запасах: его изменение — по клеткам прогноза.
+    const populationNet = next.tiles.reduce((sum, change) => (change.population === undefined ? sum : sum + change.population - economy.population[change.index]), 0);
+    const stocks = { gold: now.stockpile.gold ?? 0, food: now.stockpile.food ?? 0, production: now.stockpile.production ?? 0, population: info.population };
+    const nets = { gold: next.delta.gold ?? 0, food: next.delta.food ?? 0, production: next.delta.production ?? 0, population: populationNet };
+    const resources = {};
+    for (const key of Object.keys(stocks)) resources[key] = { stock: stocks[key], net: nets[key], after: stocks[key] + nets[key], rows: rows ? rows[key] : [] };
+
+    const season = next.report ? next.report.season : { name: '', foodMod: 1 };
+    return {
+        faction: { id: player.id, name: player.name, color: player.color, secondaryColor: player.secondaryColor, flag: player.flag, capitalTile: player.capitalTile },
+        resources, season, holdings: now.holdings,
+        territory: { regions: info.regions.filter(r => r.full).length, tiles: info.size, settlements: info.settlements.length },
+        land: LAND_RESOURCES.map(([code, icon, name]) => ({ icon, name, count: info.resources[code] || 0 })),
+        forecastLabel: `Прогноз на ход ${context.turn}: ${season.name}, еда ×${season.foodMod}`,
+        forecast: { turn: context.turn, stockpile: next.stockpile }   // для самопроверки (checkForecast), в интерфейсе не показывается
+    };
+}
+
+function refreshPlayerUI() {
+    const model = buildPlayerModel();
+    lastForecast = model ? model.forecast : null;
+    uiRenderer.renderResourcesBar(resourcesBar, model);
+    uiRenderer.renderMyFactionButton(myFactionButton, model);
+    uiRenderer.renderMyFaction(myFactionPanel, model, { onCapital: () => centerOnCapital(factions.playerFaction) });
+    uiRenderer.renderEconomy(economyPanel, model);
+}
+
+// Самопроверка: после хода запасы игрока должны совпасть с обещанным прогнозом. Расхождение почти наверняка значит, что
+// nextTurnContext отдаёт не то, что TurnManager передаёт в step() (другой номер хода или сезон), или формула недетерминирована.
+function checkForecast() {
+    if (!lastForecast || turns.turn !== lastForecast.turn) return;
+    const actual = economy.getPlayerEconomy();
+    if (!actual) return;
+    const wrong = Object.entries(lastForecast.stockpile).filter(([key, value]) => Math.abs(value - (actual.stockpile[key] ?? 0)) > 0.01);
+    if (wrong.length > 0) console.warn('Прогноз экономики не совпал с ходом:', { predicted: lastForecast.stockpile, actual: actual.stockpile });
 }
 
 /* ============================================================

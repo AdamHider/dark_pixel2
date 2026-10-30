@@ -287,6 +287,21 @@ const MapPaint = {
         return [keys, ...arrays].map(source => source.constructor.from(order, i => source[i]));
     },
 
+    // Расстояние между двумя отрезками [x0, y0, x1, y1]: 0, если они пересекаются.
+    segmentDistance(a, b) {
+        const cross = (ox, oy, px, py, qx, qy) => (px - ox) * (qy - oy) - (py - oy) * (qx - ox);
+        const sign = v => (v > 0) - (v < 0);
+        const crosses = sign(cross(a[0], a[1], a[2], a[3], b[0], b[1])) * sign(cross(a[0], a[1], a[2], a[3], b[2], b[3])) < 0
+            && sign(cross(b[0], b[1], b[2], b[3], a[0], a[1])) * sign(cross(b[0], b[1], b[2], b[3], a[2], a[3])) < 0;
+        if (crosses) return 0;
+        const toSegment = (px, py, s) => {
+            const dx = s[2] - s[0], dy = s[3] - s[1];
+            const t = Math.max(0, Math.min(1, ((px - s[0]) * dx + (py - s[1]) * dy) / (dx * dx + dy * dy || 1)));
+            return Math.hypot(px - (s[0] + t * dx), py - (s[1] + t * dy));
+        };
+        return Math.min(toSegment(a[0], a[1], b), toSegment(a[2], a[3], b), toSegment(b[0], b[1], a), toSegment(b[2], b[3], a));
+    },
+
     // Отпечаток содержимого байтового массива (две 32-битные свёртки): по нему кэши узнают, что маска не изменилась.
     fingerprint(bytes) {
         const words = new Int32Array(bytes.buffer, bytes.byteOffset, bytes.length >> 2);
@@ -1960,14 +1975,18 @@ MapPaint.Chunks = class Chunks {
 /* ============================================================
    Crossings — мосты
 
-   Мосты через реки (их ставит генератор, map.crossing — любое ненулевое значение): горбатый каменный мост поперёк реки.
-   Мост на клетке всегда один и всегда прямой: ось выбирается один раз (layout), поэтому «буквы Г» и звёзд из трёх дорог не бывает.
-   Если рядом (в том числе по диагонали) уже есть мост, он берёт ту же ось — мосты идут параллельно и не пересекаются.
+   Мосты через реки (их ставит генератор, map.crossing — любое ненулевое значение): небольшой горбатый каменный мост.
+   Мост всегда прямой и всегда самый короткий из возможных: перебираем направления через центр реки (layout), у каждого меряем
+   воду в обе стороны до суши и берём то, где её меньше всего; дорога, идущая почти так же, имеет небольшое преимущество
+   (мост продолжает её). Мост стоит ровно посередине реки — концы лежат на суше, над водой он не повисает. Если суши рядом нет
+   (устье, озеро), моста нет. Мосты не пересекаются и не касаются: если направление мешает уже поставленному мосту, берём
+   следующее по длине.
 
    Настил слегка выгнут вверх, под его южным краем видна каменная стенка с проёмом арки, на воде лежит тень.
    ============================================================ */
 {
-    const AXIS_ACROSS = 0.6;   // дорога годится как ось переправы, если она пересекает течение под углом не острее ~37°
+    const ANGLES = 16;            // сколько направлений пробуем (на полуокружности)
+    const MAX_SPAN = 1.2;         // самый длинный мост, в клетках: длиннее не ставим
 
     MapPaint.Crossings = {
         enabled: p => p.view === 'terrain' && p.layers.decorations,
@@ -1981,8 +2000,17 @@ MapPaint.Chunks = class Chunks {
             });
         },
 
+        // Размеры моста: ширина настила (нечётная: мост симметричен), сколько настила лежит на суше за берегом.
+        thickness(p) {
+            return p.px(4) | 1;
+        },
+
+        overhang(p) {
+            return Math.max(2, Math.round(p.tileSize * 0.12));
+        },
+
         /* План мостов всей карты: клетка -> { центр, ось, длина воды в обе стороны }. Не зависит от сезона, считается один раз.
-           Клетки идут по строкам; мост рядом с уже поставленным берёт его ось. */
+           Клетки идут по строкам; из направлений берётся первое по длине, которое не мешает уже поставленным мостам. */
         plan(p) {
             const { map } = p;
             const deps = [map.crossing, map.roadLinks, map.river, map.riverTo, p.tileSize, p.seedSalt, p.waterKey, p.riverMask];
@@ -1991,22 +2019,11 @@ MapPaint.Chunks = class Chunks {
                 const plan = new Map();
                 for (let i = 0; i < size * size; i++) {
                     if (!map.crossing[i]) continue;
-                    plan.set(i, this.layout(p, i, this.neighborAxis(plan, size, i)));
+                    const bridge = this.layout(p, i).find(candidate => !this.collides(p, plan, size, candidate));
+                    if (bridge) plan.set(i, bridge);
                 }
                 return plan;
             });
-        },
-
-        // Ось уже спланированного соседнего моста (или null).
-        neighborAxis(plan, size, i) {
-            const x = i % size, y = (i - x) / size;
-            for (let dy = -1; dy <= 1; dy++) {
-                for (let dx = -1; dx <= 1; dx++) {
-                    const other = (dx || dy) && x + dx >= 0 && x + dx < size && y + dy >= 0 && y + dy < size ? plan.get((y + dy) * size + x + dx) : null;
-                    if (other) return [other.ux, other.uy];
-                }
-            }
-            return null;
         },
 
         isWet(p, x, y) {
@@ -2016,71 +2033,73 @@ MapPaint.Chunks = class Chunks {
             return p.waterMask[k] === 1 || (p.riverMask !== null && p.riverMask[k] > 0);
         },
 
-        /* Где и как лежит переправа: центр (тот же, через который Rivers проводит русло), ось (ux, uy) и сколько воды в каждую
-           сторону от центра. Длину не угадываем по ширине реки, а меряем по самой нарисованной воде: идём от центра, пока
-           пиксели воды не кончатся, — так переправа всегда достаёт до суши с обеих сторон. */
-        layout(p, i, prefer) {
+        // Сколько воды от (cx, cy) в направлении (sx, sy): наибольшее из нескольких параллельных линий по ширине настила (берег бывает косым).
+        reachOf(p, i, cx, cy, sx, sy, lateral) {
+            if (!p.riverMask) return MapPaint.Rivers.riverWidthAt(p, i) / 2;
+            const { T } = p.dim;
+            let reach = 0;
+            for (let j = -lateral; j <= lateral; j++) {
+                let distance = 0;
+                while (distance < T && this.isWet(p, Math.round(cx + sx * distance - sy * j), Math.round(cy + sy * distance + sx * j))) distance += 0.5;
+                reach = Math.max(reach, distance);
+            }
+            return reach;
+        },
+
+        /* Все подходящие мосты клетки, от лучшего к худшему. Центр — тот же, через который Rivers проводит русло. Для каждого
+           направления меряем воду до суши в обе стороны; мост сдвигаем на середину этого отрезка. Оценка — длина воды минус бонус
+           за совпадение с дорогой (до px(3) пикселей). Направления без суши с одной из сторон отбрасываем: такой мост висел бы над водой. */
+        layout(p, i) {
+            const { map } = p;
             const { size, T } = p.dim;
             const x = i % size, y = (i - x) / size;
             const [centerX, centerY] = p.tileCenter(x, y, 983, 984, p.px(2));
             const cx = Math.round(centerX), cy = Math.round(centerY);
-            const [ux, uy] = this.axisFor(p, x, y, i, prefer);
-            const lateral = ((p.px(5) | 1) - 1) / 2;                 // половина ширины настила: берег бывает косым, меряем по нескольким линиям
+            const lateral = (this.thickness(p) - 1) / 2;
+            const bonus = p.px(3);
 
-            const reachOf = (sx, sy) => {
-                if (!p.riverMask) return MapPaint.Rivers.riverWidthAt(p, i) / 2;
-                let reach = 0;
-                for (let j = -lateral; j <= lateral; j++) {
-                    let distance = 0;
-                    while (distance < T && this.isWet(p, Math.round(cx + sx * distance - sy * j), Math.round(cy + sy * distance + sx * j))) distance += 0.5;
-                    reach = Math.max(reach, distance);
-                }
-                return reach;
-            };
-
-            return { tile: i, cx, cy, ux, uy, front: reachOf(ux, uy), back: reachOf(-ux, -uy) };
-        },
-
-        /* Ось моста — единичный вектор, одна на клетку. Если сосед уже задал ось (prefer) и она пересекает течение — берём её. Иначе
-           берём дорогу, которая пересекает течение ближе всего к прямому углу; нет подходящей (или дороги нет вовсе) — идём строго
-           поперёк течения. Вдоль реки мост не кладём. */
-        axisFor(p, x, y, i, prefer) {
-            const { map } = p;
-            const { size } = p.dim;
-
-            const to = map.riverTo[i];
-            let fx, fy;
-            if (to !== -1) {
-                fx = (to % size) - x;
-                fy = Math.floor(to / size) - y;
-            } else if (x > 0 && x < size - 1 && map.river[i - 1] > 0 && map.river[i + 1] > 0) {
-                fx = 1;
-                fy = 0;
-            } else {
-                fx = 0;
-                fy = 1;
-            }
-            const flow = Math.hypot(fx, fy) || 1;
-            fx /= flow;
-            fy /= flow;
-
-            const signed = axis => (axis[0] > 1e-6 || (Math.abs(axis[0]) <= 1e-6 && axis[1] > 0) ? axis : [-axis[0], -axis[1]]);   // ось без знака: «вправо» или «вниз»
-            if (prefer && Math.abs(prefer[0] * fy - prefer[1] * fx) >= AXIS_ACROSS) return signed(prefer);
-
-            let axis = [-fy, fx];                                     // поперёк течения (при диагональном течении — по диагонали)
-            let best = AXIS_ACROSS;
+            const roads = [];
             const links = map.roadLinks ? map.roadLinks[i] : 0;
             for (let d = 0; d < 8; d++) {
                 if (!(links & (1 << d))) continue;
                 const [dx, dy] = ROAD_DIRECTIONS[d];
                 const length = Math.hypot(dx, dy);
-                const across = Math.abs((dx / length) * fy - (dy / length) * fx);   // синус угла между дорогой и течением
-                if (across > best + 1e-6) {
-                    best = across;
-                    axis = [dx / length, dy / length];
+                roads.push([dx / length, dy / length]);
+            }
+
+            const found = [];
+            for (let k = 0; k < ANGLES; k++) {
+                const angle = Math.PI * k / ANGLES;
+                const ux = Math.cos(angle), uy = Math.sin(angle);
+                const front = this.reachOf(p, i, cx, cy, ux, uy, lateral), back = this.reachOf(p, i, cx, cy, -ux, -uy, lateral);
+                const span = front + back;
+                if (front >= T || back >= T || span < 1 || span > MAX_SPAN * T) continue;     // суши нет или мост слишком длинный
+
+                const align = roads.reduce((best, [rx, ry]) => Math.max(best, Math.abs(rx * ux + ry * uy)), 0);
+                const shift = (front - back) / 2;                                              // середина воды вдоль оси
+                found.push({ tile: i, cx: cx + ux * shift, cy: cy + uy * shift, ux, uy, front: span / 2, back: span / 2, score: span - bonus * align });
+            }
+            return found.sort((a, b) => a.score - b.score);
+        },
+
+        // Отрезок настила вместе с запасом на берегу: [x0, y0, x1, y1].
+        segment(p, bridge) {
+            const half = bridge.front + this.overhang(p);
+            return [bridge.cx - bridge.ux * half, bridge.cy - bridge.uy * half, bridge.cx + bridge.ux * half, bridge.cy + bridge.uy * half];
+        },
+
+        // Мешает ли мост уже поставленным (в пределах двух клеток): пересекается с ними или подходит ближе ширины настила.
+        collides(p, plan, size, bridge) {
+            const x = bridge.tile % size, y = (bridge.tile - x) / size;
+            const mine = this.segment(p, bridge);
+            const clearance = this.thickness(p) + 1;
+            for (let dy = -2; dy <= 2; dy++) {
+                for (let dx = -2; dx <= 2; dx++) {
+                    const other = x + dx >= 0 && x + dx < size && y + dy >= 0 && y + dy < size ? plan.get((y + dy) * size + x + dx) : null;
+                    if (other && MapPaint.segmentDistance(mine, this.segment(p, other)) < clearance) return true;
                 }
             }
-            return signed(axis);
+            return false;
         },
 
         /* Мост. Настил — полоса вдоль оси от суши до суши (с запасом на берегу), края — парапеты: освещённый (северо-запад) светлее,
@@ -2089,8 +2108,8 @@ MapPaint.Chunks = class Chunks {
         paintBridge(p, { cx, cy, ux, uy, front, back, tile }) {
             const { W } = p.dim;
             const c = p.colors;
-            const half = ((p.px(5) | 1) - 1) / 2;                    // нечётная ширина: мост симметричен относительно оси
-            const overhang = Math.max(2, Math.round(p.tileSize * 0.2));   // сколько настила лежит на суше за берегом
+            const half = (this.thickness(p) - 1) / 2;
+            const overhang = this.overhang(p);
             const from = -(back + overhang), to = front + overhang;
             const mid = (from + to) / 2, radius = (to - from) / 2;
             const arch = Math.min(p.px(3), Math.max(1, Math.round(radius * 0.2)));
@@ -3625,76 +3644,126 @@ MapPaint.Chunks = class Chunks {
 }
 
 /* ============================================================
-   Farms — фермерские угодья: вспаханные поля, ограда, стога и ветряные мельницы
+   Farms — фермерские угодья: пашни с пшеницей, амбары и мельницы
 
-   Клетка с ресурсом «пшеница» — участок фермы: грядки вдоль клетки (горизонтальные или вертикальные — по хешу), с южной стороны
-   жердевая ограда, иногда стог. На каждой пятой клетке стоит ветряная мельница (но не рядом с другой мельницей).
-   Стадия роста берётся из map.growth (ступени, см. growthStage), цвет — из сезона: весной ростки, летом зелёные грядки,
-   осенью золотые, зимой голая пашня со стернёй (и снегом).
+   Клетка с ресурсом «пшеница» — одна-две крупные пашни с неровными краями, разбросанные по клетке так же, как деревья.
+   Пашня намеренно простая: ровная земля с лёгкой пятнистостью, без грядок. Поверх растёт пшеница — тонкие стебли с колосом,
+   как раньше. Сколько пашен — зависит от кучности: чем больше соседних клеток с фермами, тем их больше. Край пашни
+   растворяется в местной траве (полупрозрачные пиксели), поэтому она ложится в биом, а не лежит поверх него. В плотных
+   угодьях стоит амбар, а в самых плотных — небольшая мельница; рядом друг с другом они не ставятся.
+   Густота пшеницы — из map.growth (ступени, см. growthStage), вид — из сезона: весной ростки, летом зелёные стебли, осенью
+   спелые колосья, зимой стерня.
    ============================================================ */
 {
-    const MILL_CHANCE = 0.2;                                  // доля клеток ферм, где стоит мельница
-    const MILL_NEIGHBORS = [[-1, 0], [-1, -1], [0, -1], [1, -1]];   // уже обработанные соседи: рядом с ними мельницу не ставим
-    const CROP_DENSITY = { bare: 0.25, sprout: 0.4, growing: 0.85, ripe: 1 };
+    const OPEN_SLOTS = [[0.4, 0.5], [0.76, 0.34], [0.3, 0.86]];                       // где в клетке лежат пашни (доли клетки)
+    const BUILDING_SLOTS = [[0.24, 0.34], [0.78, 0.4], [0.28, 0.9]];                  // в клетке со зданием: по углам, середина свободна
+    const NEIGHBORS_8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+    const EARLIER_NEIGHBORS = [[-1, 0], [-1, -1], [0, -1], [1, -1]];                 // клетки, обработанные раньше: рядом с ними здание не ставим
+    const STALK_DENSITY = 0.15;                                                      // стеблей на пиксель пашни при полной густоте
 
     MapPaint.Farms = {
+        // Одна-две крупные пашни в клетке (в самых плотных угодьях иногда три) и, если угодья плотные, здание.
         collect(p, items, x, y) {
-            const T = p.tileSize;
-            items.push({ y: y * T + Math.round(T * 0.6), x: x * T, cover: false, draw: () => this.drawField(p, x, y) });
-            if (this.hasMill(p, x, y)) items.push({ y: y * T + Math.round(T * 0.62), x: x * T + 1, cover: true, draw: () => this.drawMill(p, x, y) });
-        },
-
-        isMillSite(p, x, y) {
-            const { size } = p.dim;
-            return x >= 0 && y >= 0 && x < size && y < size && p.map.resource[y * size + x] === Resource.WHEAT && hashUnit(x, y, 310) < MILL_CHANCE;
-        },
-
-        hasMill(p, x, y) {
-            return this.isMillSite(p, x, y) && !MILL_NEIGHBORS.some(([dx, dy]) => this.isMillSite(p, x + dx, y + dy));
-        },
-
-        // Участок поля: грядки (посев / ряд земли / борозда по кругу из трёх рядов), ограда на юге, иногда стог.
-        drawField(p, x, y) {
             const { T } = p.dim;
-            const c = p.colors, pal = p.pal;
+            const neighbors = this.neighborCount(p, x, y);
+            const building = this.buildingAt(p, x, y);
+            const slots = building ? BUILDING_SLOTS : OPEN_SLOTS;
+            const count = Math.min(slots.length, neighbors <= 1 ? 1 : neighbors >= 6 && hashUnit(x, y, 324) < 0.4 ? 3 : 2);
+            const start = tileHash(x, y, 320) % slots.length;
+
+            for (let k = 0; k < count; k++) {
+                const [fx, fy] = slots[(start + k) % slots.length];
+                const cx = Math.round(x * T + fx * T + (hashUnit(x, y, 330 + k) - 0.5) * 0.3 * T);
+                const cy = Math.round(y * T + fy * T + (hashUnit(x, y, 340 + k) - 0.5) * 0.3 * T);
+                const rx = Math.max(3, p.px(4) + (tileHash(x, y, 350 + k) % 2));
+                const ry = Math.max(2, p.px(3) + (tileHash(x, y, 360 + k) % 2));
+                items.push({ y: cy - ry, x: cx, cover: false, draw: () => this.drawPlot(p, x, y, cx, cy, rx, ry, k) });
+            }
+
+            if (building) {
+                const bx = Math.round(x * T + 0.5 * T + (hashUnit(x, y, 322) - 0.5) * 0.2 * T);
+                const base = Math.round(y * T + 0.64 * T + (hashUnit(x, y, 323) - 0.5) * 0.1 * T);
+                items.push({ y: base, x: bx, cover: true, draw: () => this.drawBuilding(p, x, y, building, bx, base) });
+            }
+        },
+
+        isFarm(p, x, y) {
+            const { size } = p.dim;
+            return x >= 0 && y >= 0 && x < size && y < size && p.map.resource[y * size + x] === Resource.WHEAT;
+        },
+
+        // Сколько из восьми соседних клеток тоже фермы: это «кучность» угодий.
+        neighborCount(p, x, y) {
+            return NEIGHBORS_8.reduce((sum, [dx, dy]) => sum + (this.isFarm(p, x + dx, y + dy) ? 1 : 0), 0);
+        },
+
+        // Какое здание «хочет» стоять в клетке (по кучности и хешу): амбар, мельница или ничего.
+        wantedBuilding(p, x, y) {
+            if (!this.isFarm(p, x, y)) return null;
+            const neighbors = this.neighborCount(p, x, y);
+            const roll = hashUnit(x, y, 310);
+            if (neighbors >= 6 && roll < 0.14) return 'mill';
+            if (neighbors >= 4 && roll < 0.4) return 'barn';
+            return null;
+        },
+
+        // Здание, которое действительно стоит: если раньше по порядку рядом уже есть другое, этой клетке оно не достаётся.
+        buildingAt(p, x, y) {
+            const kind = this.wantedBuilding(p, x, y);
+            return kind && !EARLIER_NEIGHBORS.some(([dx, dy]) => this.wantedBuilding(p, x + dx, y + dy)) ? kind : null;
+        },
+
+        /* Одна пашня: эллипс с рваным краем, внутри ровная земля с лёгкой пятнистостью. Край полупрозрачный: земля смешивается
+           с травой под ней. Воду, реку и крутые склоны гор пашня обходит. Поверх земли растёт пшеница (drawWheat). */
+        drawPlot(p, x, y, cx, cy, rx, ry, k) {
+            const { W } = p.dim;
             const i = p.map.index(x, y);
-            const grown = (p.map.growth ? growthStage(p.map.growth[i]) : GROWTH_STAGES) / GROWTH_STAGES;   // 0..1: насколько поле заросло
-            const density = CROP_DENSITY[pal.wheatStage] * grown;
             const snow = p.snowCoverage(i);
-            const snowy = color => (snow > 0 ? mixPacked(color, p.packed.snow, 0.65 * snow) : color);
-            const ridge = snowy(p.moodize(c.dirt)), soil = snowy(p.moodize(c.mud)), furrow = shadePacked(soil, -0.2);
-            const stalk = hexToPacked(pal.wheatStalk), head = hexToPacked(pal.wheatTop);
+            const soil = mixPacked(p.moodize(p.colors.dirt), p.moodize(p.colors.mud), 0.45);
+            const base = snow > 0 ? mixPacked(soil, p.packed.snow, 0.65 * snow) : soil;
+            const dark = shadePacked(base, -0.09), light = shadePacked(base, 0.07);
 
-            const inset = Math.max(1, p.px(1));
-            const left = x * T + inset, top = y * T + p.px(2);
-            const width = T - 2 * inset, height = T - p.px(3);
-            const horizontal = hashUnit(x, y, 311) < 0.5;             // грядки идут вдоль x или вдоль y
-            const length = horizontal ? width : height, depth = horizontal ? height : width;
+            for (let dy = -ry - 1; dy <= ry + 1; dy++) {
+                for (let dx = -rx - 1; dx <= rx + 1; dx++) {
+                    const px = cx + dx, py = cy + dy;
+                    if (!p.inRegionPixel(px, py) || !p.isFree(py * W + px)) continue;
+                    const edge = Math.hypot(dx / (rx + 0.5), dy / (ry + 0.5)) + (hashUnit(px, py, 319) - 0.5) * 0.5;   // 0 — центр, 1 — край
+                    if (edge >= 1) continue;
 
-            for (let v = 0; v < depth; v++) {
-                const phase = v % 3;                                     // 0 — ряд посева, 1 — земля, 2 — борозда
-                for (let u = 0; u < length; u++) {
-                    if ((u === 0 || u === length - 1) && (v === 0 || v === depth - 1)) continue;   // скруглённые углы участка
-                    const px = horizontal ? left + u : left + v, py = horizontal ? top + v : top + u;
-                    let color = phase === 2 ? furrow : phase === 1 ? soil : ridge;
-                    if (phase === 0 && hashUnit(px, py, 312) < density) color = snow > 0.5 ? snowy(stalk) : (pal.wheatStage === 'ripe' && hashUnit(px, py, 316) < 0.45 ? head : stalk);
-                    p.put(px, py, color);
+                    const roll = hashUnit(px, py, 312);
+                    p.blend(px, py, roll < 0.25 ? dark : roll > 0.9 ? light : base, edge < 0.55 ? 0.92 : edge < 0.8 ? 0.75 : 0.5);
                 }
             }
 
-            if (hashUnit(x, y, 313) < 0.65) this.drawFence(p, left, top + height, width, snow);
-            if (hashUnit(x, y, 314) < 0.3 && !this.hasMill(p, x, y)) {
-                const stackX = left + p.px(2) + Math.floor(hashUnit(x, y, 317) * (width - p.px(4)));
-                this.drawHaystack(p, stackX, top + height - p.px(1), snow);
-            }
+            this.drawWheat(p, i, cx, cy, rx, ry);
+            if (k === 0 && hashUnit(x, y, 314) < 0.22) this.drawHaystack(p, cx + rx, cy + ry, snow);   // стог у края первой пашни
         },
 
-        // Жердевая ограда: перекладина и столбики через три пикселя.
-        drawFence(p, left, y, width, snow) {
-            const rail = p.moodize(p.colors.plank), post = shadePacked(rail, 0.2);
-            for (let dx = 0; dx < width; dx++) {
-                p.put(left + dx, y, snow > 0 ? mixPacked(rail, p.packed.snow, 0.5 * snow) : rail);
-                if (dx % 3 === 1) p.put(left + dx, y - 1, post);
+        /* Пшеница: тонкие стебли с колосом в глубине пашни (края остаются голой землёй). Густота — от стадии роста, высота и вид —
+           от сезона: ростки, зелёные стебли, спелые колосья с двойным колосом, зимой низкая стерня. */
+        drawWheat(p, i, cx, cy, rx, ry) {
+            const { W } = p.dim;
+            const pal = p.pal;
+            const stalk = hexToPacked(pal.wheatStalk), head = hexToPacked(pal.wheatTop);
+            const stage = (p.map.growth ? growthStage(p.map.growth[i]) : GROWTH_STAGES) / GROWTH_STAGES;
+            const stalks = Math.round(Math.PI * rx * ry * STALK_DENSITY * stage);
+
+            for (let attempt = 0, placed = 0; placed < stalks && attempt < stalks * 4; attempt++) {
+                const h = tileHash(cx, cy, 380 + attempt);
+                const dx = (h % (2 * rx + 1)) - rx, dy = ((h >>> 8) % (2 * ry + 1)) - ry;
+                if ((dx / (rx + 0.5)) ** 2 + (dy / (ry + 0.5)) ** 2 > 0.6) continue;           // подальше от края пашни
+                const sx = cx + dx, sy = cy + dy + 1;                                            // основание стебля
+                if (!p.inRegionPixel(sx, sy) || !p.isFree(sy * W + sx)) continue;
+                placed++;
+
+                if (pal.wheatStage === 'bare') {
+                    p.rect(sx, sy - 2, 1, 2, stalk);
+                    continue;
+                }
+                const height = (pal.wheatStage === 'sprout' ? p.px(1.5) : pal.wheatStage === 'growing' ? p.px(3) : p.px(4)) + ((h >>> 16) % 2);
+                p.rect(sx, sy - height, 1, height, stalk);
+                p.put(sx, sy - height, head);
+                if (pal.wheatStage === 'ripe') p.put(sx, sy - height - 1, head);
             }
         },
 
@@ -3710,43 +3779,78 @@ MapPaint.Chunks = class Chunks {
             p.blend(cx + 1, base + 1, BLACK, 0.2);
         },
 
-        // Ветряная мельница: каменная башня, крыша-конус и четыре крыла по диагоналям.
+        // Здание фермы с тенью и пятачком утоптанной земли.
+        drawBuilding(p, x, y, kind, cx, base) {
+            const sprite = kind === 'mill' ? this.millSprite(p, Math.round(p.snowCoverage(p.map.index(x, y)) * 3)) : this.barnSprite(p, Math.round(p.snowCoverage(p.map.index(x, y)) * 3));
+            p.rect(cx - p.px(2), base - 1, p.px(4) + 1, 2, mixPacked(p.moodize(p.colors.dirt), p.moodize(p.colors.mud), 0.3));
+            MapPaint.Settlements.drawBuildingShadow(p, cx, base, p.px(4), p.px(4));
+            p.blitSprite(sprite.buffer, cx - sprite.anchorX, base - sprite.anchorY);
+        },
+
+        // Амбар: дощатые стены, высокая соломенная крыша, широкие ворота.
+        barnSprite(p, snowLevel) {
+            const n = value => p.px1(value);
+            const c = p.colors;
+            const key = ['barn', snowLevel, p.mood, p.season.name, p.tileSize].join('|');
+            const bodyW = n(6), bodyH = n(3), roofH = n(3);
+            const width = bodyW + 4, height = bodyH + roofH + 2;
+
+            return p.sprite(key, width, height, c.outline, buffer => {
+                const wall = mixPacked(p.moodize(c.roofB), p.moodize(c.plank), 0.25);   // тёмно-красные доски
+                let roof = p.moodize(c.thatch);
+                if (snowLevel > 0) roof = mixPacked(roof, p.packed.snow, 0.85 * snowLevel / 3);
+                const left = 2, top = 1 + roofH, mid = (width - 1) / 2;
+
+                buffer.rect(left, top, bodyW, bodyH, wall);
+                buffer.rect(left, top, 1, bodyH, shadePacked(wall, 0.14));
+                buffer.rect(left + bodyW - 1, top, 1, bodyH, shadePacked(wall, -0.22));
+                buffer.rect(left, top + bodyH - 1, bodyW, 1, shadePacked(wall, -0.18));
+                buffer.rect(Math.round(mid) - 1, top + bodyH - Math.min(2, bodyH - 1), 2, Math.min(2, bodyH - 1), p.moodize(c.plank));   // ворота
+
+                for (let row = 0; row < roofH; row++) {                                              // крыша: ряды всё шире книзу
+                    const half = ((bodyW + 2) / 2) * (row + 1) / roofH;
+                    for (let px = Math.round(mid - half + 0.5); px <= Math.round(mid + half - 0.5); px++) {
+                        buffer.put(px, 1 + row, px < mid ? shadePacked(roof, 0.14) : shadePacked(roof, -0.2));
+                    }
+                }
+                return { anchorX: Math.round(mid), anchorY: height - 2 };
+            });
+        },
+
+        // Небольшая ветряная мельница: каменная башня, конус крыши и четыре крыла по диагоналям.
         millSprite(p, snowLevel) {
             const n = value => p.px1(value);
             const c = p.colors;
             const key = ['mill', snowLevel, p.mood, p.season.name, p.tileSize].join('|');
-            const width = n(12), height = n(15);
+            const reach = Math.max(2, n(3));
+            const width = 2 * reach + 1;
+            const towerHeight = n(4), capHeight = Math.max(2, n(2));
+            const towerTop = reach + 1, floor = towerTop + towerHeight - 1;
+            const height = floor + 2;
 
             return p.sprite(key, width, height, c.outline, buffer => {
-                const mid = width >> 1, floor = height - 2;
-                const snow = snowLevel / 3;
-                const wall = p.moodize(c.wallA), roof = p.moodize(c.roofB);
-                const roofLit = snow > 0 ? mixPacked(roof, p.packed.snow, 0.85 * snow) : roof;
-                const roofShade = shadePacked(roofLit, -0.18);
+                const mid = width >> 1;
+                const wall = p.moodize(c.wallA);
+                let roof = p.moodize(c.roofB);
+                if (snowLevel > 0) roof = mixPacked(roof, p.packed.snow, 0.85 * snowLevel / 3);
                 const sail = packRgb(226, 216, 184), spar = p.moodize(c.plank);
 
-                // башня: сужается кверху, левая сторона на свету, правая в тени
-                const towerHeight = n(8), towerTop = floor - towerHeight + 1;
-                const bottomHalf = Math.max(2, n(5) >> 1), topHalf = Math.max(1, bottomHalf - 1);
+                // башня сужается кверху: левая сторона на свету, правая в тени
+                const bottomHalf = Math.max(1, n(3) >> 1), topHalf = Math.max(1, bottomHalf - (towerHeight > 3 ? 1 : 0));
                 for (let row = 0; row < towerHeight; row++) {
                     const half = Math.round(topHalf + (bottomHalf - topHalf) * row / Math.max(1, towerHeight - 1));
                     for (let dx = -half; dx <= half; dx++) {
-                        const shade = dx === -half ? 0.1 : dx === half ? -0.2 : 0;
-                        buffer.put(mid + dx, towerTop + row, hashUnit(dx, row, 318) < 0.12 ? shadePacked(wall, -0.1) : shadePacked(wall, shade));
+                        buffer.put(mid + dx, towerTop + row, shadePacked(wall, dx === -half ? 0.1 : dx === half ? -0.2 : 0));
                     }
                 }
-                buffer.rect(mid, floor - 1, 1, 2, spar);                // дверь
+                buffer.put(mid, floor, spar);                                                       // дверь
 
-                // крыша-конус над башней
-                const capHeight = n(3);
-                for (let row = 0; row < capHeight; row++) {
+                for (let row = 0; row < capHeight; row++) {                                          // крыша-конус
                     const half = Math.min(topHalf + 1, Math.round((row + 1) * (topHalf + 1) / capHeight));
-                    buffer.rect(mid - half, towerTop - capHeight + 1 + row, half * 2 + 1, 1, row === 0 ? roofLit : roofShade);
-                    buffer.put(mid - half, towerTop - capHeight + 1 + row, roofLit);
+                    buffer.rect(mid - half, towerTop - capHeight + 1 + row, half * 2 + 1, 1, row === 0 ? roof : shadePacked(roof, -0.18));
                 }
 
-                // крылья: четыре диагонали от втулки, у каждого — полотно с одной стороны
-                const hubY = towerTop + 1, reach = n(5);
+                const hubY = towerTop + 1;                                                           // крылья: полотно с одной стороны
                 for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
                     for (let step = 1; step <= reach; step++) {
                         buffer.put(mid + sx * step, hubY + sy * step, spar);
@@ -3754,20 +3858,8 @@ MapPaint.Chunks = class Chunks {
                     }
                 }
                 buffer.put(mid, hubY, spar);
-
                 return { anchorX: mid, anchorY: floor + 1 };
             });
-        },
-
-        drawMill(p, x, y) {
-            const { T } = p.dim;
-            const sprite = this.millSprite(p, Math.round(p.snowCoverage(p.map.index(x, y)) * 3));
-            const cx = x * T + Math.round(T / 2) + Math.round((hashUnit(x, y, 315) - 0.5) * 0.2 * T);
-            const base = y * T + Math.round(T * 0.62);
-
-            p.rect(cx - p.px(3), base - 1, p.px(6) + 1, 2, p.moodize(p.colors.dirt));       // пятачок утоптанной земли у подножия
-            MapPaint.Settlements.drawBuildingShadow(p, cx, base, p.px(4), p.px(5));
-            p.blitSprite(sprite.buffer, cx - sprite.anchorX, base - sprite.anchorY);
         }
     };
 }
