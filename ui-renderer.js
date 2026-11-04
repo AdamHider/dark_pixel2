@@ -26,7 +26,7 @@ const MODIFIER_NAMES = {
 // Ресурсы экономики: порядок показа в верхней панели и в окне «Экономика».
 const ECONOMY_RESOURCES = [
     { key: 'gold', icon: '🪙', name: 'Золото', title: 'Золото (казна)' },
-    { key: 'food', icon: '🌾', name: 'Еда', title: 'Еда (зернохранилище)' },
+    { key: 'food', icon: '🌾', name: 'Еда', title: 'Продовольствие', level: true },   // уровень около нуля, а не запас: показывается со знаком и ярусом
     { key: 'production', icon: '⚙️', name: 'Производство', title: 'Производство (склад)' },
     { key: 'population', icon: '👥', name: 'Население', title: 'Население' }
 ];
@@ -297,8 +297,9 @@ class UIRenderer {
        Здесь только показ: данные (model) собирает main.js (buildPlayerModel), UIRenderer ничего не считает.
        model = {
            faction: { id, name, color, secondaryColor, flag, capitalTile },
-           resources: { gold|food|production|population: { stock, net, after, rows: [{ label, value }] } },
-           season: { name, foodMod }, holdings: { army, towers },
+           resources: { gold|food|production|population: { stock, net, after, rows: [{ label, value | text }] } },
+                       // у еды stock — текущий уровень, after — уровень на следующем ходу, плюс tier и nextTier: { key, name }
+           season: { name, foodMod }, holdings: { army, towers }, edicts: [{ regionId, key, name }],
            territory: { regions, tiles, settlements }, land: [{ icon, name, count }],
            forecastLabel
        }
@@ -313,6 +314,16 @@ class UIRenderer {
 
     deltaClass(value) {
         return value > 0.05 ? 'pos' : value < -0.05 ? 'neg' : 'zero';
+    }
+
+    // Уровень еды: целое со знаком («+3», «−4», «0»).
+    formatLevel(value) {
+        return value > 0 ? `+${value}` : value < 0 ? `−${-value}` : '0';
+    }
+
+    // Показатель для верхней панели и окна: у еды — уровень со знаком, у остальных — число.
+    formatStock(resource, entry) {
+        return resource.level ? this.formatLevel(entry.stock) : this.formatAmount(entry.stock);
     }
 
     // Цвет из данных вставляем в разметку только если это «#rgb» или «#rrggbb».
@@ -340,13 +351,15 @@ class UIRenderer {
         container.hidden = !model;
         if (!model) return;
         for (const resource of ECONOMY_RESOURCES) {
-            const { stock, net, after } = model.resources[resource.key];
-            container.appendChild(this.createElement('div', 'res-item', {
-                title: `${resource.title}: ${this.formatAmount(stock)}. Прогноз на следующий ход: ${this.formatAmount(net, { signed: true })} → ${this.formatAmount(after)}`
-            }, [
+            const entry = model.resources[resource.key];
+            const { net, after } = entry;
+            const title = resource.level
+                ? `${resource.title}: ${this.formatLevel(entry.stock)} (${entry.tier.name}). Прогноз на следующий ход: ${this.formatLevel(after)} (${entry.nextTier.name})`
+                : `${resource.title}: ${this.formatAmount(entry.stock)}. Прогноз на следующий ход: ${this.formatAmount(net, { signed: true })} → ${this.formatAmount(after)}`;
+            container.appendChild(this.createElement('div', `res-item${resource.level ? ` tier-${entry.tier.key}` : ''}`, { title }, [
                 this.createElement('span', 'icon', { text: resource.icon }),
-                this.createElement('span', 'val', { text: this.formatAmount(stock) }),
-                this.createElement('span', `delta ${this.deltaClass(net)}`, { text: this.formatAmount(net, { signed: true }) })
+                this.createElement('span', 'val', { text: this.formatStock(resource, entry) }),
+                this.createElement('span', `delta ${this.deltaClass(net)}`, { text: resource.level ? `→ ${this.formatLevel(after)}` : this.formatAmount(net, { signed: true }) })
             ]));
         }
     }
@@ -389,11 +402,126 @@ class UIRenderer {
         container.append(head,
             this.createElement('div', 'section-subtitle', { text: 'Территория' }), territory,
             this.createElement('div', 'section-subtitle', { text: 'Ресурсы на земле' }), land);
+        if (model.edicts && model.edicts.length > 0) {
+            container.appendChild(this.createElement('div', 'section-subtitle', { text: 'Эдикты' }));
+            container.appendChild(this.createElement('div', 'kv-list edict-list', {}, model.edicts.map(e => row(`Регион #${e.regionId}`, e.name))));
+        }
         if (faction.capitalTile >= 0 && onCapital) {
             const button = this.createElement('button', '', { type: 'button', text: 'К столице' });
             button.addEventListener('click', onCapital);
             container.appendChild(this.createElement('div', 'group', {}, [button]));
         }
+    }
+
+    /* Отношения с фракцией: полоса от −100 до +100 с нулём посередине и подпись «Дружба · +45». tier — { key, name }. */
+    renderOpinion(value, tier, stateName) {
+        const half = Math.min(50, Math.abs(value) / 2);
+        const fill = this.createElement('span', `opinion-fill tier-${tier.key}`, { style: `${value >= 0 ? 'left: 50%' : `right: 50%`}; width: ${half}%;` });
+        return this.createElement('div', 'opinion', { title: `Отношения ${this.formatLevel(Math.round(value))} (от −100 до +100)` }, [
+            this.createElement('div', 'opinion-head', {}, [
+                this.createElement('span', `tier-${tier.key}`, { text: `${tier.name} · ${this.formatLevel(Math.round(value))}` }),
+                this.createElement('span', 'opinion-state', { text: stateName })
+            ]),
+            this.createElement('div', 'opinion-bar', {}, [fill, this.createElement('span', 'opinion-zero')])
+        ]);
+    }
+
+    /* Кнопки дипломатических действий: actions — [{ action, label, ok, reason, danger?, preview? }] (DiplomacyManager.actions).
+       Подсказка кнопки: причина отказа или из чего сложилась оценка согласия. onAction(action) — по нажатию. */
+    renderDiplomacyActions(actions, { onAction } = {}) {
+        const box = this.createElement('div', 'diplomacy-actions');
+        for (const a of actions) {
+            const score = a.preview ? `Оценка ${this.formatAmount(a.preview.score)} (нужно не меньше ${a.preview.required}): ${a.preview.reasons.map(r => `${r.label} ${this.formatAmount(r.value, { signed: true })}`).join('; ')}` : '';
+            const button = this.createElement('button', `build-btn${a.danger ? ' demolish' : ''}`, { type: 'button', title: [a.reason, score].filter(Boolean).join('. ') || a.label }, [
+                this.createElement('span', 'build-label', { text: a.label }),
+                a.preview ? this.createElement('span', 'build-cost', { text: `${a.preview.score >= a.preview.required ? 'согласятся' : 'откажут'} · ${this.formatAmount(a.preview.score)}/${a.preview.required}` }) : null
+            ]);
+            button.disabled = !a.ok;
+            button.addEventListener('click', () => onAction(a));
+            box.appendChild(button);
+        }
+        return box;
+    }
+
+    // Журнал дипломатии: последние события, новые сверху. log — [{ turn, kind, text }].
+    renderDiplomacyLog(container, log, limit = 8) {
+        container.replaceChildren();
+        container.hidden = log.length === 0;
+        if (log.length === 0) return;
+        container.appendChild(this.createElement('div', 'section-subtitle', { text: 'Журнал дипломатии' }));
+        for (const entry of log.slice(-limit).reverse()) {
+            container.appendChild(this.createElement('div', `log-row log-${entry.kind}`, { text: `Ход ${entry.turn}: ${entry.text}` }));
+        }
+    }
+
+    /* Армия в окне региона. model = { army, other, orders } | null (скрыть):
+         army  — выбранная армия игрока (или null), other — чужая или невыбранная армия на клетке (карточка для справки),
+         orders — [{ label, costText?, ok, reason?, danger? }]: приказы выбранной клетки.
+       Карточка армии: { name, factionName, mine, strength, maxStrength, moves, movesLeft, x, y }. onOrder(order), onDeselect(). */
+    renderArmyControls(container, model, { onOrder, onDeselect } = {}) {
+        container.replaceChildren();
+        const visible = model && (model.army || model.other || model.orders.length > 0);
+        container.hidden = !visible;
+        if (!visible) return;
+        const card = a => this.createElement('div', `army-card${a.mine ? '' : ' foreign'}`, {}, [
+            this.createElement('div', 'army-title', { text: `🛡 ${a.name} · ${a.factionName}` }),
+            this.createElement('div', 'army-stats', { text: `Сила ${this.formatAmount(a.strength)}/${a.maxStrength} · ходы ${this.formatAmount(a.movesLeft)}/${a.moves} · клетка (${a.x}, ${a.y})` })
+        ]);
+        if (model.army) container.appendChild(card(model.army));
+        if (model.other) container.appendChild(card(model.other));
+        container.appendChild(this.createElement('span', 'label', { text: 'Армия:' }));
+        for (const order of model.orders) {
+            const button = this.createElement('button', `build-btn${order.danger ? ' demolish' : ''}`, { type: 'button', title: order.ok ? order.label : order.reason }, [
+                this.createElement('span', 'build-label', { text: order.label }),
+                order.costText ? this.createElement('span', 'build-cost', { text: order.costText }) : null
+            ]);
+            button.disabled = !order.ok;
+            button.addEventListener('click', () => onOrder(order));
+            container.appendChild(button);
+        }
+        if (model.army && onDeselect) {
+            const cancel = this.createElement('button', 'build-btn', { type: 'button', text: 'Снять выбор' });
+            cancel.addEventListener('click', onDeselect);
+            container.appendChild(cancel);
+        }
+    }
+
+    /* Кнопки приказов выбранной клетки. actions — [{ action: 'build' | 'demolish', type, label, costText, ok, reason }]: что можно
+       построить или снести на клетке (недоступное — серое, причина в подсказке). onAction(action) вызывается по нажатию. */
+    renderBuildControls(container, actions, { onAction } = {}) {
+        container.replaceChildren();
+        container.hidden = actions.length === 0;
+        if (actions.length === 0) return;
+        container.appendChild(this.createElement('span', 'label', { text: 'Строительство:' }));
+        for (const a of actions) {
+            const button = this.createElement('button', `build-btn ${a.action === 'demolish' ? 'demolish' : ''}`, { type: 'button', title: a.ok ? a.label : a.reason }, [
+                this.createElement('span', 'build-label', { text: a.label }),
+                a.costText ? this.createElement('span', 'build-cost', { text: a.costText }) : null
+            ]);
+            button.disabled = !a.ok;
+            button.addEventListener('click', () => onAction(a));
+            container.appendChild(button);
+        }
+    }
+
+    /* Эдикт региона. model = { regionId, current, edicts: { ключ: { name, description } }, costText } | null (скрыть).
+       onChoose(ключ) — выбрать эдикт ('none' — отменить). */
+    renderEdictControls(container, model, { onChoose } = {}) {
+        container.replaceChildren();
+        container.hidden = !model;
+        if (!model) return;
+        const select = this.createElement('select', 'edict-select', { 'aria-label': 'Эдикт региона' }, [
+            this.createElement('option', '', { value: 'none', text: 'Без эдикта' }),
+            ...Object.entries(model.edicts).map(([key, edict]) => this.createElement('option', '', { value: key, text: edict.name }))
+        ]);
+        select.value = model.current;
+        select.addEventListener('change', () => onChoose(select.value));
+        const current = model.edicts[model.current];
+        container.append(
+            this.createElement('span', 'label', { text: `Эдикт региона #${model.regionId}:` }),
+            select,
+            this.createElement('div', 'edict-desc', { text: current ? current.description : `Эффект на выработку ресурсов региона. Введение: ${model.costText}.` })
+        );
     }
 
     // Окно «Экономика»: по каждому ресурсу запас и прогноз на следующий ход («40 (+2 → 42)») и раскрывающаяся разбивка прихода и расхода.
@@ -407,22 +535,28 @@ class UIRenderer {
         container.appendChild(this.createElement('div', 'eco-season', { text: model.forecastLabel }));
 
         for (const resource of ECONOMY_RESOURCES) {
-            const { stock, net, after, rows } = model.resources[resource.key];
+            const entry = model.resources[resource.key];
+            const { net, after, rows } = entry;
+            const rowText = r => (r.text !== undefined ? r.text : this.formatAmount(r.value, { signed: true }));
+            const rowClass = r => (r.text !== undefined ? (r.text.startsWith('+') ? 'pos' : r.text.startsWith('-') ? 'neg' : 'zero') : this.deltaClass(r.value));
             const details = this.createElement('details', 'eco-details', { 'data-key': resource.key }, [
                 this.createElement('summary', '', { text: 'Приход и расход' }),
                 ...rows.map(r => this.createElement('div', 'eco-row', {}, [
                     this.createElement('span', '', { text: r.label }),
-                    this.createElement('b', this.deltaClass(r.value), { text: this.formatAmount(r.value, { signed: true }) })
+                    this.createElement('b', rowClass(r), { text: rowText(r) })
                 ]))
             ]);
             details.open = opened.has(resource.key);
+            // у еды — уровень и ярус («+3 · Профицит», затем прогноз уровня), у остальных — запас и прогноз («40 (+2 → 42)»)
+            const value = resource.level
+                ? [this.createElement('span', `tier-${entry.tier.key}`, { text: `${this.formatLevel(entry.stock)} · ${entry.tier.name}` }),
+                    this.createElement('span', `delta tier-${entry.nextTier.key}`, { text: `(→ ${this.formatLevel(after)} · ${entry.nextTier.name})` })]
+                : [this.createElement('span', '', { text: this.formatAmount(entry.stock) }),
+                    this.createElement('span', `delta ${this.deltaClass(net)}`, { text: `(${this.formatAmount(net, { signed: true })} → ${this.formatAmount(after)})` })];
             container.appendChild(this.createElement('div', `eco-box eco-${resource.key}`, {}, [
                 this.createElement('div', 'eco-title', {}, [
                     this.createElement('span', '', { text: `${resource.icon} ${resource.title}` }),
-                    this.createElement('span', 'eco-value', {}, [
-                        this.createElement('span', '', { text: this.formatAmount(stock) }),
-                        this.createElement('span', `delta ${this.deltaClass(net)}`, { text: `(${this.formatAmount(net, { signed: true })} → ${this.formatAmount(after)})` })
-                    ])
+                    this.createElement('span', 'eco-value', {}, value)
                 ]),
                 details
             ]));

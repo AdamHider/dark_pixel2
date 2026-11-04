@@ -69,6 +69,7 @@ class FactionManager {
                 { name: 'Зелёные', color: '#808000', secondaryColor: '#e6e0a8', flag: { pattern: 'saltire', emblem: 'cross' }, regions: [4, 5] }
             ],
             playerFaction: 0,  // какая из стартовых фракций (по номеру) — фракция игрока; null или -1 — никто
+            defaultRelation: 'peace', // состояние фракций, пока его не изменили: 'war' (война), 'peace' (нейтралитет) или 'alliance' (союз); дальше его меняет DiplomacyManager
             seedDistance: 5,   // на каком расстоянии (в регионах) друг от друга стоят столицы
             attempts: 160,     // сколько раскладок перебрать при расстановке; берётся лучшая по ресурсам и равенству сторон
             coverageWeight: 20, // вес разнообразия ресурсов (дерево, поля, металл, эфир) при выборе раскладки
@@ -93,6 +94,7 @@ class FactionManager {
         this.map = map;
         this.factions = [];                                              // { id, name, color, secondaryColor, flag: { pattern, emblem }, capitalRegion, capitalTile, player }
         this.tileFaction = new Int16Array(map.size * map.size).fill(-1); // id фракции-владельца клетки, -1 — ничья
+        this.relations = new Map();                                      // отношения пар фракций: 'a-b' (a < b) -> 'war' | 'peace' | 'alliance'
         this.touch('attach');
     }
 
@@ -100,7 +102,7 @@ class FactionManager {
     touch(reason) {
         this.version++;
         if (typeof this.map.applyFactionState === 'function') {
-            this.map.applyFactionState({ factions: this.factions, tileFaction: this.tileFaction, version: this.version });
+            this.map.applyFactionState({ factions: this.factions, tileFaction: this.tileFaction, relations: [...this.relations], defaultRelation: this.options.defaultRelation, version: this.version });
         }
         for (const listener of [...this.listeners]) listener(this, reason);
     }
@@ -118,7 +120,7 @@ class FactionManager {
             const faction = this.tileFaction[i];
             if (faction >= 0) (owners[faction] ||= []).push(i);
         }
-        return { format: 1, mapSeed: this.map.seed, factions: this.factions.map(f => ({ ...f })), owners };
+        return { format: 1, mapSeed: this.map.seed, factions: this.factions.map(f => ({ ...f })), owners, relations: [...this.relations] };
     }
 
     // Восстановить сохранённое состояние (для той же карты).
@@ -127,6 +129,7 @@ class FactionManager {
         if (state.mapSeed !== this.map.seed) throw new Error('Состояние сохранено для другой карты');
         this.factions = state.factions.map(f => ({ ...f }));
         this.options.playerFaction = this.playerFaction ? this.playerFaction.id : -1;
+        this.relations = new Map(state.relations || []);
         this.tileFaction.fill(-1);
         for (const [faction, tiles] of Object.entries(state.owners)) for (const tile of tiles) this.tileFaction[tile] = Number(faction);
         this.touch('state');
@@ -183,6 +186,24 @@ class FactionManager {
 
     releaseRegion(regionId) {
         return this.claimRegion(-1, regionId);
+    }
+
+    /* Отношения фракций: 'war' (война), 'peace' (мир), 'alliance' (союз); пока не заданы — options.defaultRelation.
+       Враждебны только воюющие: чужие клетки мирных и союзных фракций армия захватить не может. */
+    relationOf(a, b) {
+        if (a === b) return 'self';
+        return this.relations.get(a < b ? `${a}-${b}` : `${b}-${a}`) || this.options.defaultRelation;
+    }
+
+    isHostile(a, b) {
+        return a !== b && a >= 0 && b >= 0 && this.relationOf(a, b) === 'war';
+    }
+
+    setRelation(a, b, relation) {
+        if (!['war', 'peace', 'alliance'].includes(relation)) throw new Error(`Неизвестные отношения «${relation}»`);
+        if (a === b || !this.factions[a] || !this.factions[b]) throw new Error('Отношения задаются между двумя разными фракциями');
+        this.relations.set(a < b ? `${a}-${b}` : `${b}-${a}`, relation);
+        this.touch('relation');
     }
 
     // Фракция игрока (одна; -1 — никто). Флаг лежит на самой фракции, поэтому доходит до карты (map.factions) и попадает в сохранение.
@@ -311,6 +332,7 @@ class FactionManager {
         const random = factionRandom(this.options.seed ?? ((map.seed | 0) ^ 0x9e3779b9));
 
         this.factions = [];
+        this.relations.clear();
         this.tileFaction.fill(-1);
         const defs = definitions || [];
         for (const def of defs) this.factions.push(FactionManager.makeFaction(def, this.factions.length, this.factions.length === this.options.playerFaction));

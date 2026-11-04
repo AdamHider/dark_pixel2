@@ -911,9 +911,15 @@ MapPaint.Chunks = class Chunks {
             return { colors, water };
         },
 
-        // В режиме регионов реки не рисуются, но клетки рек в регионы не входят (regionId = -1): показываем их как воду.
+        // В режимах регионов и фракций реки не рисуются, но клетки рек в регионы не входят (regionId = -1): показываем их как воду.
         isRiverTileInRegionsView(p, i) {
-            return p.view === 'regions' && p.map.regionId[i] < 0;
+            return (p.view === 'regions' || p.view === 'factions') && p.map.regionId[i] < 0;
+        },
+
+        // Цвет с обесцвеченной основой: его яркость сохраняется (пустыня светлее леса), а оттенок убирается — подложка политической карты.
+        grayed(color, tone, amount) {
+            const lum = Math.round(0.299 * (color & 255) + 0.587 * ((color >> 8) & 255) + 0.114 * ((color >> 16) & 255));
+            return mixPacked(packRgb(lum, lum, lum), tone, amount);
         },
 
         tileColor(p, i) {
@@ -924,6 +930,10 @@ MapPaint.Chunks = class Chunks {
             if (p.view === 'temperature') {
                 const hue = 215 - 215 * map.temperature[i]; // синий (холод) -> красный (жара)
                 return hslToPacked(hue, 60, isWater ? 36 : 52);
+            }
+            if (p.view === 'factions') {                                 // серая подложка: вода тёмная, суша светлая, горы чуть темнее
+                if (isWater || this.isRiverTileInRegionsView(p, i)) return this.grayed(this.waterColor(p, i), packRgb(48, 62, 80), 0.55);
+                return this.grayed(terrain === Terrain.MOUNTAIN ? p.packed.rock : p.packed.biome[map.biome[i]], packRgb(176, 179, 184), 0.55);
             }
             if (isWater || this.isRiverTileInRegionsView(p, i)) return this.waterColor(p, i);
             if (p.view === 'regions') return hslToPacked((map.regionId[i] * 137.5) % 360, 45, 58); // «золотой угол»: соседи разного цвета
@@ -1973,6 +1983,63 @@ MapPaint.Chunks = class Chunks {
 }
 
 /* ============================================================
+   Politics — политическая карта (режим просмотра «Фракции»)
+
+   Сама карта в этом режиме серая (см. Base: яркость земли и воды сохраняется, цвет убран), все декорации выключены (они работают только
+   в режиме terrain). Территории рисуются не в карту, а в слой фракций (Territories.paint): тот же слой, что и в обычном режиме, поэтому
+   смена владельцев после захвата или войны не перерисовывает карту и не сбрасывает масштаб.
+   Здесь — заливка земель фракций непрозрачным цветом (яркость подложки даёт лёгкий рельеф), та же граница, что и на обычной карте
+   (окантовка, цвет фракции, статус: красная — война, белая — нейтралитет, зелёная — союз) и знаки: поселения (белые квадраты), башни
+   (квадраты цвета фракции) и столицы (ромб второго цвета фракции).
+   ============================================================ */
+{
+    MapPaint.Politics = {
+        // Рисует политическую карту в массив пикселей слоя (ABGR).
+        compose(p, territories, pixels) {
+            const border = new Uint8Array(pixels.length);
+            MapPaint.Territories.compose(p, territories, pixels, { opaque: true, borderMask: border });
+            const base = p.pixels;
+            if (base && base.length === pixels.length) {
+                for (let k = 0; k < pixels.length; k++) {
+                    if ((pixels[k] >>> 24) !== 255 || border[k]) continue;
+                    const lum = 0.299 * (base[k] & 255) + 0.587 * ((base[k] >> 8) & 255) + 0.114 * ((base[k] >> 16) & 255);
+                    const factor = Math.min(1.15, Math.max(0.82, 0.82 + (lum - 100) / 280));     // светлее подложка — светлее заливка
+                    const c = pixels[k];
+                    pixels[k] = packRgb(Math.min(255, Math.round((c & 255) * factor)), Math.min(255, Math.round(((c >> 8) & 255) * factor)), Math.min(255, Math.round(((c >> 16) & 255) * factor)));
+                }
+            }
+            this.paintMarkers(p, pixels);
+        },
+
+        // Знаки: поселения, башни и столицы (в центре клетки, с тёмной окантовкой).
+        paintMarkers(p, pixels) {
+            const { map } = p;
+            const { size, T, W } = p.dim;
+            const u = Math.max(1, Math.round(T / 12));
+            const dark = packRgb(14, 16, 20);
+            const put = (x, y, color) => { if (x >= 0 && y >= 0 && x < W && y < W) pixels[y * W + x] = color; };
+            const centerOf = tile => [(tile % size) * T + (T >> 1), Math.floor(tile / size) * T + (T >> 1)];
+            const square = (tile, half, color) => {
+                const [cx, cy] = centerOf(tile);
+                for (let dy = -half - 1; dy <= half + 1; dy++) for (let dx = -half - 1; dx <= half + 1; dx++) put(cx + dx, cy + dy, Math.max(Math.abs(dx), Math.abs(dy)) > half ? dark : color);
+            };
+            const diamond = (tile, radius, color) => {
+                const [cx, cy] = centerOf(tile);
+                for (let dy = -radius - 1; dy <= radius + 1; dy++) for (let dx = -radius - 1; dx <= radius + 1; dx++) {
+                    const distance = Math.abs(dx) + Math.abs(dy);
+                    if (distance <= radius + 1) put(cx + dx, cy + dy, distance > radius ? dark : color);
+                }
+            };
+            const color = hex => (hex ? hexToPacked(hex) : packRgb(200, 200, 200));
+
+            for (let i = 0; i < map.resource.length; i++) if (map.resource[i] === Resource.SETTLEMENT) square(i, u, packRgb(244, 244, 244));
+            for (const structure of map.structures || []) if (structure.type === 'tower') square(structure.tile, u, color(map.factions[structure.faction] && map.factions[structure.faction].color));
+            for (const faction of map.factions) if (faction.capitalTile >= 0) diamond(faction.capitalTile, 2 * u + 1, color(faction.secondaryColor || faction.color));
+        }
+    };
+}
+
+/* ============================================================
    Crossings — мосты
 
    Мосты через реки (их ставит генератор, map.crossing — любое ненулевое значение): небольшой горбатый каменный мост.
@@ -2930,7 +2997,7 @@ MapPaint.Chunks = class Chunks {
             regionShoreBorder: false  // граница региона идёт и вдоль берега моря, озёр и рек (реки в регионы не входят)
         },
 
-        enabled: p => p.showBorders && p.layers.borders,
+        enabled: p => p.showBorders && p.layers.borders && p.view !== 'factions',   // на политической карте границы регионов — лишний шум
 
         build(p) {
             MapPaint.PixelRegions.build(p);
@@ -3217,8 +3284,11 @@ MapPaint.Chunks = class Chunks {
     MapPaint.Territories = {
         defaults: {
             factionBorder: 2,                // толщина цветной границы фракции в пикселях (для клетки 16×16; масштабируется вместе с клеткой)
-            factionBorderOpacity: 0.75,
-            factionFill: 0.2,                // лёгкая заливка земель фракции цветом фракции (0 — без заливки)
+            factionBorderOpacity: 0.95,
+            factionFill: 0.22,               // лёгкая заливка земель фракции цветом фракции (0 — без заливки)
+            factionOutline: true,            // тёмная окантовка снаружи границы: цветная линия не сливается с местностью любого цвета
+            factionStatus: 1,                // толщина линии дипломатического статуса у границы с другой фракцией (в пикселях клетки 12×12; 0 — без линии)
+            relationColors: { war: '#e0463a', peace: '#f4f4f4', alliance: '#4fc04f' },   // цвет линии статуса: война — красная, нейтралитет — белая, союз — зелёная
             factionCoastBorder: true,        // граница фракции идёт и вдоль берега моря и озёр
             factionRiverBorder: 'boundary'  // вдоль берегов рек: 'always' — всегда (река в территорию не входит), 'boundary' — только если на том берегу другая территория
         },
@@ -3235,6 +3305,23 @@ MapPaint.Chunks = class Chunks {
                border: 2 }                                             // толщина границы (по умолчанию factionBorder)
            Более поздняя территория перекрывает более раннюю там, где они пересекаются. Вызывать после paint(). */
         paint(p, territories = this.fromMap(p)) {
+            const layer = p.createLayer();
+            if (p.view === 'factions') MapPaint.Politics.compose(p, territories, layer.pixels);     // политическая карта: заливка, границы, знаки
+            else this.compose(p, territories, layer.pixels, { covered: p.spriteMask });
+            MapPaint.Highlights.compose(p, layer.pixels);                                           // подсветка армии поверх территорий
+            return layer.commit();
+        },
+
+        /* Рисует территории в массив пикселей (ABGR): заливка земель и граница. Снаружи внутрь по территории:
+             у границы с ничьей землёй, берегом и рекой — тёмная окантовка (factionOutline), затем цветная линия фракции;
+             у границы с другой фракцией — линия дипломатического статуса (factionStatus: война — красная, нейтралитет — белая,
+             союз — зелёная), тонкая тёмная линия (чтобы статус читался рядом с любым цветом фракции), затем цветная линия фракции.
+             Статус рисуют обе стороны, поэтому посередине границы выходит яркая линия статуса в тёмной рамке, а по сторонам — цвета двух фракций.
+           Окантовка отделяет цветную линию от любой местности (лес, пустыня, море), а статус виден сразу у каждой границы двух фракций.
+           opts: fill — прозрачность заливки по умолчанию; opaque — заливка непрозрачная (политическая карта);
+                 covered — маска пикселей, где рисовать нельзя (спрайты: под деревьями и домами граница идёт «по земле»);
+                 borderMask — Uint8Array, куда отмечаются пиксели границы (чтобы не затенять их как заливку). */
+        compose(p, territories, pixels, { fill = p.options.factionFill, opaque = false, covered = null, borderMask = null } = {}) {
             const { T, W } = p.dim;
             const owner = MapPaint.PixelRegions.build(p);
             const cellOf = MapPaint.Cells.build(p);
@@ -3246,26 +3333,46 @@ MapPaint.Chunks = class Chunks {
                 if (owner[k] >= 0 && cellOf[k] >= 0) pixelTerritory[k] = tileTerritory[cellOf[k]];
             }
 
+            const unit = Math.max(1, Math.round(T / 12));             // базовая толщина тонкой линии: 1 пиксель на клетке 12×12
+            const outline = p.options.factionOutline ? unit : 0;
+            const status = Math.round((p.options.factionStatus === true ? 1 : Number(p.options.factionStatus) || 0) * unit);   // толщина линии статуса в «единицах» (0 — выключена)
             const widths = territories.map(t => Math.max(1, Math.round((t.border ?? p.options.factionBorder) * T / 16)));
-            const depth = this.territoryBorderDepth(p, pixelTerritory, owner, Math.max(1, ...widths));
+            const { depth, across } = this.territoryBorderDepth(p, pixelTerritory, owner, Math.max(outline, status + outline) + Math.max(1, ...widths));
 
-            const layer = p.createLayer();
-            const pixels = layer.pixels;
-            const rgb = territories.map(t => {
-                const c = hexToPacked(t.color || '#999999');
-                return (c & 255) | (((c >> 8) & 255) << 8) | (((c >> 16) & 255) << 16);
-            });
+            const toAbgr = hex => { const c = hexToPacked(hex || '#999999'); return (c & 255) | (((c >> 8) & 255) << 8) | (((c >> 16) & 255) << 16); };
+            const rgb = territories.map(t => toAbgr(t.color));
+            const dark = toAbgr('#0e1014');
+            const statusRgb = this.statusColors(p, territories, toAbgr);
             const borderAlpha = Math.round(255 * p.options.factionBorderOpacity);
-            const fillAlpha = territories.map(t => Math.round(255 * clamp(t.fill ?? p.options.factionFill)));
+            const fillAlpha = territories.map(t => (opaque ? 255 : Math.round(255 * clamp(t.fill ?? fill))));
 
-            const covered = p.spriteMask;                         // под деревьями, домами и рудами слой не рисуем: граница идёт «по земле»
             for (let k = 0; k < pixelTerritory.length; k++) {
                 const t = pixelTerritory[k];
-                if (t < 0 || covered[k] === 1) continue;
-                const alpha = depth[k] > 0 && depth[k] <= widths[t] ? borderAlpha : fillAlpha[t];
-                if (alpha > 0) pixels[k] = rgb[t] | (alpha << 24);
+                if (t < 0 || (covered && covered[k] === 1)) continue;
+                const d = depth[k];
+                const line = d > 0 && status > 0 && across[k] >= 0 ? statusRgb[t][across[k]] : -1;     // граница с другой фракцией: цвет статуса
+                const edge = line >= 0 ? status + outline : outline;                                    // толщина «рамки» до цветной линии
+                if (d > 0 && d <= edge + widths[t]) {
+                    if (line >= 0 && d <= status) pixels[k] = line | (255 << 24);
+                    else if (d <= edge) pixels[k] = dark | (235 << 24);
+                    else pixels[k] = rgb[t] | (borderAlpha << 24);
+                    if (borderMask) borderMask[k] = 1;
+                } else if (fillAlpha[t] > 0) {
+                    pixels[k] = rgb[t] | (fillAlpha[t] << 24);
+                }
             }
-            return layer.commit();
+        },
+
+        // Цвет линии статуса для каждой пары территорий: [t][a] -> ABGR или -1 (нет данных об отношениях).
+        statusColors(p, territories, toAbgr) {
+            const map = p.map;
+            const relation = (a, b) => (map.factionRelations && map.factionRelations.get(a < b ? `${a}-${b}` : `${b}-${a}`)) || map.defaultRelation || 'war';
+            const abgr = Object.fromEntries(Object.entries(p.options.relationColors).map(([key, hex]) => [key, toAbgr(hex)]));
+            return territories.map(t => territories.map(u => {
+                if (t.id === undefined || u.id === undefined || t.id === u.id) return -1;
+                const color = abgr[relation(t.id, u.id)];
+                return color === undefined ? -1 : color;
+            }));
         },
 
         // Территории фракций по состоянию, которое faction manager передал в карту (map.factions и map.tileFaction), в формате для paintTerritories: [{ id, color, tiles }].
@@ -3315,20 +3422,22 @@ MapPaint.Chunks = class Chunks {
             const total = pixelTerritory.length;
             const DX = [-1, 1, 0, 0], DY = [0, 0, -1, 1];
             const depth = new Uint8Array(W * W);
+            const across = new Int16Array(W * W).fill(-2);            // с кем граничит пиксель границы: номер территории, -1 — ничья земля, -2 — вода и прочее
             let frontier = [];
             for (let k = 0; k < total; k++) {
                 const t = pixelTerritory[k];
                 if (t < 0) continue;
                 const x = k % W, y = (k - x) / W;
                 let edge = false;
-                for (let d = 0; d < 4 && !edge; d++) {
+                let neighbor = -2;
+                for (let d = 0; d < 4; d++) {
                     let nx = x + DX[d], ny = y + DY[d];
                     if (nx < 0 || ny < 0 || nx >= W || ny >= W) continue;
                     const j = ny * W + nx;
                     if (owner[j] >= 0) {                                   // земля: граница, если там другая территория или ничья
-                        edge = pixelTerritory[j] !== t;
+                        if (pixelTerritory[j] !== t) { edge = true; neighbor = Math.max(neighbor, pixelTerritory[j]); }
                     } else if (water[j]) {
-                        edge = coast;
+                        if (coast) edge = true;
                     } else if (river && river[j] > 0) {
                         if (riverAlways) { edge = true; continue; }       // граница вдоль любого берега реки
                         for (let n = 0; n < 40; n++) {                     // иначе идём поперёк до противоположного берега
@@ -3336,13 +3445,14 @@ MapPaint.Chunks = class Chunks {
                             ny += DY[d];
                             if (nx < 0 || ny < 0 || nx >= W || ny >= W) break;
                             const m = ny * W + nx;
-                            if (owner[m] >= 0) { edge = pixelTerritory[m] !== t; break; }
+                            if (owner[m] >= 0) { if (pixelTerritory[m] !== t) { edge = true; neighbor = Math.max(neighbor, pixelTerritory[m]); } break; }
                             if (!(river[m] > 0)) break;                    // река кончилась (озеро, море): берега напротив нет
                         }
                     }
                 }
                 if (edge) {
                     depth[k] = 1;
+                    across[k] = neighbor;
                     frontier.push(k);
                 }
             }
@@ -3353,12 +3463,13 @@ MapPaint.Chunks = class Chunks {
                     for (const j of [x > 0 ? k - 1 : -1, x < W - 1 ? k + 1 : -1, k - W, k + W]) {
                         if (j < 0 || j >= pixelTerritory.length || depth[j] !== 0 || pixelTerritory[j] !== t) continue;
                         depth[j] = layer;
+                        across[j] = across[k];
                         next.push(j);
                     }
                 }
                 frontier = next;
             }
-            return depth;
+            return { depth, across };
         }
     };
 }
@@ -3366,7 +3477,7 @@ MapPaint.Chunks = class Chunks {
 /* ============================================================
    Scene — сцена: горы и декорации рисуются вместе, строка за строкой сверху вниз
 
-   Декорации (деревья, дома, фермы, руды, эфир) собираются в список (collect: у каждого вида свой collect(p, items, ...))
+   Декорации (деревья, дома, фермы, руды, эфир, башни) собираются в список (collect: у каждого вида свой collect(p, items, ...))
    и рисуются в порядке «основания»: тот, что южнее, рисуется позже и перекрывает северных. Горы идут теми же строками.
    ============================================================ */
 {
@@ -3410,6 +3521,7 @@ MapPaint.Chunks = class Chunks {
 
             p.forEachRegionTile((x, y) => {
                 const i = map.index(x, y);
+                if (map.structureAt && map.structureAt[i] >= 0) MapPaint.Structures.collect(p, items, x, y, i);
                 // На дорогах нет ни леса, ни полей, ни руд (кроме клеток поселений) — даже если карта сгенерирована старой версией.
                 if (map.roadLevel[i] > 0 && map.resource[i] !== Resource.SETTLEMENT) return;
                 const collector = collectors[map.resource[i]];
@@ -3982,6 +4094,129 @@ MapPaint.Chunks = class Chunks {
 }
 
 /* ============================================================
+   Structures — башни: каменный сторожевой пост с флагом фракции
+
+   Башни строит игрок (construction manager), карта хранит их в map.structures / map.structureAt. Цвет флага — основной и второй
+   цвет фракции владельца. Армии здесь не рисуются: это объекты спрайтового рендерера (renderer.setObjects).
+   ============================================================ */
+{
+    MapPaint.Structures = {
+        collect(p, items, x, y, i) {
+            const structure = p.map.structures[p.map.structureAt[i]];
+            if (!structure || structure.type !== 'tower') return;
+            const T = p.tileSize;
+            items.push({ y: y * T + Math.round(T * 0.76), x: x * T + Math.round(T / 2), cover: true, draw: () => this.drawTower(p, x, y, structure) });
+        },
+
+        // Цвета флага: основной и второй цвет фракции башни (запасные — серые).
+        flagColors(p, structure) {
+            const faction = p.map.factions[structure.faction];
+            return [faction && faction.color ? hexToPacked(faction.color) : packRgb(160, 160, 160), faction && faction.secondaryColor ? hexToPacked(faction.secondaryColor) : packRgb(230, 230, 230)];
+        },
+
+        // Каменная башня с зубцами, окном, дверью и флагом на шесте; зимой на зубцах снег.
+        towerSprite(p, structure, snowLevel) {
+            const n = value => p.px1(value);
+            const c = p.colors;
+            const [primary, secondary] = this.flagColors(p, structure);
+            const key = ['tower', primary, secondary, snowLevel, p.mood, p.season.name, p.tileSize].join('|');
+            const bodyW = Math.max(4, n(5)) | 1, bodyH = n(8), poleH = n(5), flagW = Math.max(2, n(3));
+            const width = bodyW + flagW + 2, height = bodyH + poleH + 3;
+
+            return p.sprite(key, width, height, c.outline, buffer => {
+                const stone = p.moodize(c.chapelStone);
+                const left = 1, mid = left + (bodyW >> 1), floor = height - 2, bodyTop = floor - bodyH + 1;
+                const snow = snowLevel / 3;
+
+                buffer.rect(left, bodyTop, bodyW, bodyH, stone);                                // стена: слева свет, справа тень
+                buffer.rect(left, bodyTop, 1, bodyH, shadePacked(stone, 0.16));
+                buffer.rect(left + bodyW - 1, bodyTop, 1, bodyH, shadePacked(stone, -0.24));
+                for (let row = 1; row < bodyH; row += 2) buffer.put(left + 1 + ((row >> 1) % 2), bodyTop + row, shadePacked(stone, -0.1));   // кладка
+
+                for (let dx = 0; dx < bodyW; dx += 2) {                                         // зубцы над стеной
+                    const merlon = snow > 0 ? mixPacked(shadePacked(stone, 0.1), p.packed.snow, 0.85 * snow) : shadePacked(stone, 0.1);
+                    buffer.put(left + dx, bodyTop - 1, merlon);
+                }
+                buffer.put(mid, bodyTop + 2, packRgb(28, 26, 34));                              // окно-бойница
+                buffer.rect(mid, floor - 1, 1, 2, packRgb(38, 28, 22));                         // дверь
+
+                const poleTop = bodyTop - 1 - poleH;                                            // шест и флаг
+                buffer.rect(mid, poleTop, 1, poleH, p.moodize(c.plank));
+                buffer.rect(mid + 1, poleTop, flagW, 1, primary);
+                buffer.rect(mid + 1, poleTop + 1, flagW, 1, secondary);
+                return { anchorX: mid, anchorY: floor + 1 };
+            });
+        },
+
+        drawTower(p, x, y, structure) {
+            const { T } = p.dim;
+            const sprite = this.towerSprite(p, structure, Math.round(p.snowCoverage(p.map.index(x, y)) * 3));
+            const cx = x * T + Math.round(T / 2);
+            const base = y * T + Math.round(T * 0.76);
+            MapPaint.Settlements.drawBuildingShadow(p, cx, base, p.px(4), p.px(3));
+            p.blitSprite(sprite.buffer, cx - sprite.anchorX, base - sprite.anchorY);
+        }
+    };
+}
+
+/* ============================================================
+   Highlights — подсветка клеток интерфейсом
+
+   map.highlights[клетка] — вид подсветки (его задаёт интерфейс через map.applyStructureState): 1 — куда армия может дойти, 2 — её зона
+   перехвата и захвата, 3 — цели для атаки, 4 — выбранная армия. Подсветка рисуется в слое фракций (Territories.paint), как и границы:
+   карта при её смене не перерисовывается, масштаб не сбрасывается — так же легко, как граница выбранного региона.
+   Заливка полупрозрачная, а граница рисуется только там, где вид подсветки у соседней клетки другой: получается контур области.
+   ============================================================ */
+{
+    const KINDS = {
+        1: { color: '#4aa8ff', fill: 0.2, edge: 0.85 },   // достижимо
+        2: { color: '#ffd24a', fill: 0.28, edge: 0.9 },   // зона перехвата и захвата
+        3: { color: '#ff4a3a', fill: 0.34, edge: 0.95 },  // цель атаки
+        4: { color: '#ffffff', fill: 0.08, edge: 1 }      // выбранная армия
+    };
+
+    MapPaint.Highlights = {
+        // Накладывает подсветку на массив пикселей слоя (ABGR), учитывая то, что в нём уже нарисовано (территории).
+        compose(p, pixels) {
+            const { map } = p;
+            if (!map.highlights || !map.highlights.some(kind => kind > 0)) return;
+            const { size, T, W } = p.dim;
+            const colors = {};
+            for (const [kind, style] of Object.entries(KINDS)) colors[kind] = hexToPacked(style.color);
+            const kindAt = (x, y) => (x < 0 || y < 0 || x >= size || y >= size ? 0 : map.highlights[y * size + x]);
+
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const kind = kindAt(x, y);
+                    if (!kind) continue;
+                    const style = KINDS[kind], color = colors[kind];
+                    const edges = [kindAt(x, y - 1) !== kind, kindAt(x + 1, y) !== kind, kindAt(x, y + 1) !== kind, kindAt(x - 1, y) !== kind];   // север, восток, юг, запад
+                    for (let dy = 0; dy < T; dy++) {
+                        for (let dx = 0; dx < T; dx++) {
+                            const onEdge = (edges[0] && dy === 0) || (edges[2] && dy === T - 1) || (edges[3] && dx === 0) || (edges[1] && dx === T - 1);
+                            this.blendInto(pixels, (y * T + dy) * W + x * T + dx, color, onEdge ? style.edge : style.fill);
+                        }
+                    }
+                }
+            }
+        },
+
+        // Смешивает цвет с пикселем слоя: пустой пиксель получает цвет с заданной непрозрачностью, занятый — смесь с учётом его непрозрачности.
+        blendInto(pixels, k, color, alpha) {
+            const existing = pixels[k], ea = existing >>> 24;
+            if (ea === 0) {
+                pixels[k] = (color & 0xFFFFFF) | (Math.round(alpha * 255) << 24);
+                return;
+            }
+            const total = ea + (255 - ea) * alpha;                         // общая непрозрачность
+            const t = (alpha * 255) / total;                               // доля нового цвета в смеси (приближённо)
+            const mix = shift => Math.round(((existing >> shift) & 255) + (((color >> shift) & 255) - ((existing >> shift) & 255)) * t);
+            pixels[k] = mix(0) | (mix(8) << 8) | (mix(16) << 16) | (Math.round(total) << 24);
+        }
+    };
+}
+
+/* ============================================================
    Grade — тёмный стиль: цветокоррекция, туман, виньетка
 
    Рисуется последним: затемняет и подкрашивает уже нарисованное. Туман от сезона не зависит (build).
@@ -4127,7 +4362,7 @@ class MapPainter extends MapPaint.Tools {
        клеток (paintRect). Часть, нарисованная отдельно, пиксель в пиксель такая же, как при полной отрисовке.
        ============================================================ */
 
-    // view: 'terrain' | 'temperature' | 'regions'. Рисует всю карту и возвращает холст.
+    // view: 'terrain' | 'temperature' | 'regions' | 'factions'. Рисует всю карту и возвращает холст.
     paint(frame) {
         this.begin(frame);
         this.paintRect({ tx0: 0, ty0: 0, tx1: this.map.size, ty1: this.map.size });

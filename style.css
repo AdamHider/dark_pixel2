@@ -239,6 +239,7 @@ label {
 }
 .res-item .val { color: var(--gold); }
 
+.res-item { white-space: nowrap; }
 .res-item .delta { font-size: 11px; font-weight: 600; }
 .pos { color: var(--up); }
 .neg { color: var(--down); }
@@ -552,6 +553,8 @@ label {
 /* ОКНО «ЭКОНОМИКА» */
 .eco-season { margin-bottom: 8px; font-size: 12px; color: var(--ink-dim); }
 .eco-box { margin-bottom: 8px; padding: 6px 8px; background: #12161b; border: 1px solid var(--edge-dark); border-left: 4px solid var(--edge); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05); }
+.eco-food .eco-title { flex-wrap: wrap; }
+.eco-food .eco-value { flex-basis: 100%; flex-wrap: wrap; white-space: normal; margin-top: 2px; }
 .eco-gold { border-left-color: var(--gold); }
 .eco-food { border-left-color: var(--moss); }
 .eco-production { border-left-color: var(--blood); }
@@ -564,6 +567,47 @@ label {
 .eco-row { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; border-bottom: 1px dashed #2d3742; padding-bottom: 2px; }
 .eco-row b { white-space: nowrap; }
 .eco-note { margin-top: 6px; font-size: 12px; color: var(--ink-dim); }
+
+/* ВСПЛЫВАЮЩЕЕ СООБЩЕНИЕ (отказ приказа, итог предложения) */
+#toast { position: fixed; left: 50%; bottom: 56px; transform: translateX(-50%); z-index: 40; max-width: 520px; padding: 6px 14px; font-size: 13px; color: #ffb4a6; background: rgba(60, 14, 10, .95); border: 1px solid #5c1a12; box-shadow: 0 6px 22px rgba(0, 0, 0, .6); pointer-events: none; }
+
+/* ДИПЛОМАТИЯ: ОТНОШЕНИЯ И ДЕЙСТВИЯ */
+.opinion { margin: 4px 0 6px; }
+.opinion-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 700; }
+.opinion-state { font-weight: 400; color: var(--ink-dim); }
+.opinion-bar { position: relative; height: 8px; margin-top: 3px; background: #0c1014; border: 1px solid var(--edge-dark); }
+.opinion-fill { position: absolute; top: 0; bottom: 0; background: currentColor; }
+.opinion-zero { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--ink-dim); }
+.tier-friendship { color: #8be07a; } .tier-sympathy { color: var(--up); } .tier-neutral { color: var(--ink-dim); } .tier-antipathy { color: #e08a4f; } .tier-enmity { color: var(--down); }
+.diplomacy-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.diplomacy-log { margin-top: 8px; padding-top: 6px; border-top: 1px dashed #2d3742; font-size: 12px; }
+.log-row { margin-top: 2px; color: var(--ink-dim); }
+.log-war, .log-break { color: var(--down); } .log-peace, .log-alliance, .log-gift { color: var(--up); } .log-refused { color: #e0a353; }
+
+/* ЯРУСЫ ПРОДОВОЛЬСТВИЯ (уровень еды) */
+.tier-abundance { color: #8be07a; }
+.tier-surplus { color: var(--up); }
+.tier-balance { color: var(--ink-dim); }
+.tier-hunger { color: #e08a4f; }
+.tier-famine { color: var(--down); }
+.res-item.tier-abundance .val, .res-item.tier-surplus .val, .res-item.tier-hunger .val, .res-item.tier-famine .val { color: inherit; }
+.res-item.tier-balance .val { color: var(--gold); }
+.res-item[class*="tier-"] .delta { color: var(--ink-dim); }
+
+/* СТРОИТЕЛЬСТВО И ЭДИКТЫ (окно региона) */
+.build-controls, .edict-controls, .army-controls { margin-top: 8px; padding-top: 6px; border-top: 1px dashed #2d3742; }
+.build-controls .label, .edict-controls .label, .army-controls .label { display: block; flex-basis: 100%; font: 8px/1.4 var(--font-pixel); color: var(--ink-dim); letter-spacing: .12em; text-transform: uppercase; }
+.army-card { flex-basis: 100%; padding: 4px 8px; background: #12161b; border: 1px solid var(--edge-dark); border-left: 4px solid #4aa8ff; }
+.army-card.foreign { border-left-color: var(--blood); }
+.army-title { font-size: 13px; font-weight: 700; color: var(--gold); }
+.army-stats { font-size: 12px; color: var(--ink-dim); }
+.build-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 4px 8px; font-size: 12px; text-align: left; }
+.build-btn .build-cost { font-size: 10px; font-weight: 400; color: var(--ink-dim); }
+.build-btn:disabled { opacity: .45; cursor: not-allowed; }
+.build-btn.demolish { background: linear-gradient(180deg, #4a2a26, #2c1614); }
+.edict-select { width: 100%; margin-top: 4px; background: #0c1014; border: 2px solid var(--edge-dark); padding: 4px 6px; font-size: 13px; }
+.edict-desc { margin-top: 4px; font-size: 12px; color: var(--ink-dim); }
+.edict-list .kv-row b { text-align: right; }
 
 /* ЗАГЛУШКИ ДЛЯ ОКОН */
 .placeholder-box {

@@ -682,7 +682,7 @@ const MapGen = {
 {
     MapGen.Crossings = {
         defaults: {
-            riverCrossingChance: 0.1  // доля подходящих прямых участков рек, где ставится мост
+            riverCrossingChance: 0.3  // доля подходящих прямых участков рек, где ставится мост
         },
 
         // Мосты: на прямых участках рек (вода входит и выходит в одном направлении) изредка ставим мост.
@@ -1541,17 +1541,88 @@ const MapGen = {
 }
 
 /* ============================================================
+   Structures — постройки
+
+   Постройки приходят от construction manager: башни и армии стоят на клетках, мосты — это значение map.crossing у клеток реки.
+   Сама карта их не создаёт и ничего не решает, только хранит и сообщает о том, что нужно перерисовать.
+   ============================================================ */
+{
+    MapGen.Structures = {
+        /* state — любое из:
+             structures: [{ type, tile, faction }]     полный список башен (мосты в нём не нужны: они в crossing)
+             crossingChanges: [{ tile, crossing }]     мост построен (1) или разрушен (0) на клетке реки
+             highlights: [{ tile, kind }]              подсветка клеток (полный список; [] — снять): 1 достижимо, 2 зона, 3 цель, 4 выбрано
+                                                       (рисуется в слое фракций, без перерисовки карты)
+             version
+           Слушателям уходит { visualChanged }: true, если изменилось то, что видно на карте. */
+        apply(map, { structures, crossingChanges = [], highlights, version } = {}) {
+            for (const { tile, crossing } of crossingChanges) {
+                if (!map.isLand(tile) || !(map.river[tile] > 0) || (crossing !== 0 && crossing !== 1)) throw new Error(`Нельзя менять мост на клетке ${tile}: мосты бывают только на реках`);
+            }
+            for (const { type, tile } of structures || []) {
+                if (!['tower', 'army'].includes(type) || !map.isLand(tile)) throw new Error(`Нельзя поставить ${type} на клетку ${tile}`);
+            }
+
+            let visual = this.applyCrossings(map, crossingChanges);
+            if (structures) visual = this.applyStructures(map, structures) || visual;
+            const highlightsChanged = !!highlights && this.applyHighlights(map, highlights);
+
+            map.structureVersion = version === undefined ? map.structureVersion + 1 : version;
+            if (visual) map.visualVersion++;
+            map.structureChannel.emit({ visualChanged: visual, version: map.structureVersion });
+            // Рендерер подписан на состояние экономики (перерисовка карты по правилам autoRepaint, масштаб не сбрасывается) и фракций (лёгкий слой
+            // поверх карты). Постройки и мосты — часть самой карты, поэтому сообщаем об изменении так же, как о росте лесов; подсветка рисуется в слое
+            // фракций, поэтому для неё поднимаем версию и повторяем сообщение слою: карта при этом не перерисовывается.
+            if (visual) { map.economyVersion++; map.economyChannel.emit({ visualChanged: true, version: map.economyVersion }); }
+            if (highlightsChanged) { map.factionVersion++; map.factionChannel.emit(map); }
+        },
+
+        // Массив crossing заменяется целиком: по ссылке на него кэши рисования (мосты) узнают, что мосты изменились.
+        applyCrossings(map, changes) {
+            const changed = changes.filter(({ tile, crossing }) => (map.crossing[tile] > 0 ? 1 : 0) !== crossing);
+            if (changed.length === 0) return false;
+            map.crossing = Uint8Array.from(map.crossing);
+            for (const { tile, crossing } of changed) map.crossing[tile] = crossing;
+            return true;
+        },
+
+        applyHighlights(map, highlights) {
+            const next = new Uint8Array(map.highlights.length);
+            for (const { tile, kind } of highlights) next[tile] = Math.max(next[tile], kind);   // при наложении побеждает более «важный» (больший) вид
+            if (next.every((kind, i) => kind === map.highlights[i])) return false;
+            map.highlights = next;
+            return true;
+        },
+
+        applyStructures(map, structures) {
+            const same = structures.length === map.structures.length && structures.every((s, k) => {
+                const old = map.structures[k];
+                return old.type === s.type && old.tile === s.tile && old.faction === s.faction;
+            });
+            if (same) return false;
+            map.structures = structures.map(s => ({ type: s.type, tile: s.tile, faction: s.faction }));
+            map.structureAt.fill(-1);
+            map.structures.forEach((s, k) => { map.structureAt[s.tile] = k; });
+            return true;
+        }
+    };
+}
+
+/* ============================================================
    Factions — фракции
 
    Фракции и владение клетками приходят от faction manager; рендерер рисует слой фракций по map.factionVersion.
    ============================================================ */
 {
     MapGen.Factions = {
-        // state = { factions: [{ id, name, color, capitalRegion, capitalTile }], tileFaction: Int16Array (id фракции или -1 на клетку), version }
-        apply(map, { factions, tileFaction, version }) {
+        // state = { factions: [{ id, name, color, secondaryColor, capitalRegion, capitalTile }], tileFaction: Int16Array (id фракции или -1 на клетку),
+        //           relations: [['a-b', 'war' | 'peace' | 'alliance']], defaultRelation, version }
+        apply(map, { factions, tileFaction, relations = [], defaultRelation = 'war', version }) {
             if (!tileFaction || tileFaction.length !== map.tileFaction.length) throw new Error('tileFaction не подходит к этой карте');
             map.factions = factions.map(f => ({ ...f }));
             map.tileFaction = Int16Array.from(tileFaction);
+            map.factionRelations = new Map(relations);
+            map.defaultRelation = defaultRelation;
             map.factionVersion = version === undefined ? map.factionVersion + 1 : version;
             map.factionChannel.emit(map);
         }
@@ -1729,6 +1800,7 @@ class MapGenerator {
         this.turnChannel = new MapGen.Emitter();                 // состояние хода (onTurnState)
         this.economyChannel = new MapGen.Emitter();              // состояние экономики (onEconomyState)
         this.factionChannel = new MapGen.Emitter();              // состояние фракций (onFactionState)
+        this.structureChannel = new MapGen.Emitter();            // состояние построек (onStructureState)
     }
 
     // Конвейер генерации: один seed — одна карта.
@@ -1763,6 +1835,12 @@ class MapGenerator {
         this.visualVersion = 0;                       // растёт, только когда экономика изменила то, что видно (ступень роста, уровень поселения)
         this.factions = [];                           // фракции: { id, name, color, capitalRegion, capitalTile }
         this.factionVersion = 0;                      // версия состояния от менеджера: по ней перерисовывается слой фракций
+        this.factionRelations = new Map();            // отношения пар фракций: 'a-b' (a < b) -> 'war' | 'peace' | 'alliance' (чего нет — defaultRelation)
+        this.defaultRelation = 'war';
+        this.structures = [];                         // постройки (строит construction manager): { type: 'tower' | 'army' | 'bridge', tile, faction }
+        this.structureAt = new Int32Array(this.size * this.size).fill(-1);   // индекс постройки в structures для каждой клетки, -1 — пусто
+        this.structureVersion = 0;                    // версия состояния построек
+        this.highlights = new Uint8Array(this.size * this.size);   // подсветка клеток интерфейсом (HIGHLIGHT_KINDS): достижимость армии, зона перехвата, цели
     }
 
     /* ---------- Сетка: координаты, соседи, обходы ---------- */
@@ -1895,10 +1973,12 @@ class MapGenerator {
     applyTurnState(state) { MapGen.Turn.apply(this, state); }
     applyEconomyState(state) { MapGen.Economy.apply(this, state); }
     applyFactionState(state) { MapGen.Factions.apply(this, state); }
+    applyStructureState(state) { MapGen.Structures.apply(this, state); }
 
     // Подписки на новое состояние; каждая возвращает функцию отписки.
     onTurnState(listener) { return this.turnChannel.subscribe(listener); }
     onEconomyState(listener) { return this.economyChannel.subscribe(listener); }
+    onStructureState(listener) { return this.structureChannel.subscribe(listener); }
     onFactionState(listener) { return this.factionChannel.subscribe(listener); }
 
     getTileInfo(x, y) { return MapGen.Info.tile(this, x, y); }

@@ -57,6 +57,7 @@
                 <button data-view="terrain" aria-pressed="true">Рельеф</button>
                 <button data-view="temperature" aria-pressed="false">Температура</button>
                 <button data-view="regions" aria-pressed="false">Регионы</button>
+                <button data-view="factions" aria-pressed="false" title="Политическая карта: серая местность, заливка цветом фракций, границы со статусом отношений">Фракции</button>
             </div>
             <div class="hr"></div>
             <div class="group">
@@ -81,6 +82,7 @@
         <section id="factions-panel" hidden>
             <h2 class="panel-title">Дипломатия и Фракции</h2>
             <div id="factions" aria-label="Фракции"></div>
+            <div id="diplomacy-log" class="diplomacy-log" hidden></div>
         </section>
 
         <!-- 3. Моя Фракция (Заглушка) -->
@@ -97,7 +99,10 @@
 
         <!-- 5. Детали Выбранного Региона -->
         <section id="win-region" hidden>
+            <div id="army-controls" class="group army-controls" hidden></div>
+            <div id="build-controls" class="group build-controls" hidden></div>
             <div id="selection" class="selection" hidden></div>
+            <div id="edict-controls" class="edict-controls" hidden></div>
             <div id="owner-controls" class="group" hidden style="margin-top: 6px;"></div>
         </section>
 
@@ -145,6 +150,9 @@
 <script src="turn-manager.js"></script>
 <script src="economy-manager.js"></script>
 <script src="faction-economy.js"></script>
+<script src="construction-manager.js"></script>
+<script src="army-manager.js"></script>
+<script src="diplomacy-manager.js"></script>
 <script src="ui-renderer.js"></script>
 <script src="main.js"></script>
 
