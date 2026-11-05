@@ -30,7 +30,7 @@
      прочность (hp), при нуле она разрушается; пока башня стоит, её клетка и соседние не захватываются.
    ============================================================ */
 
-   class ArmyManager {
+   class ArmyManager extends GameModule {
     static get DEFAULTS() {
         return {
             recruitCost: { population: 160, production: 15, gold: 15 },       // найм: много жителей, мало производства и золота
@@ -50,13 +50,13 @@
     }
 
     constructor(map, options = {}) {
+        super();
         const { economy, factions, construction, ...rest } = options;
         if (!economy || !construction) throw new Error('ArmyManager: нужны economy и construction');
         this.options = { ...ArmyManager.DEFAULTS, ...rest };
         this.economy = economy;
         this.factions = factions || null;
         this.construction = construction;
-        this.listeners = new Set();
         this.attach(map);
     }
 
@@ -67,20 +67,16 @@
 
     // Привязать менеджер к карте (в том числе заново сгенерированной): армий нет.
     attach(map) {
-        this.map = map;
+        super.attach(map);
         this.armies = [];            // { id, faction, tile, strength, moves, movesLeft, zone }
         this.nextId = 1;
         this.turn = 0;
     }
 
-    onChange(listener) {
-        this.listeners.add(listener);
-        return () => this.listeners.delete(listener);
-    }
-
+    // Наследует onChange/emit от GameModule: перед уведомлением обновляем содержание армий в экономике.
     emit(change) {
         for (const faction of this.map.factions) this.economy.setHoldings(faction.id, { army: this.armiesOf(faction.id).length });
-        for (const listener of [...this.listeners]) listener(change);
+        super.emit(change);
     }
 
     get(armyId) {

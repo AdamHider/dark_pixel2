@@ -5,10 +5,15 @@
 Browser-based pixel-art fantasy map generator. Plain ES classes, no build step, no
 dependencies. Scripts are loaded in `index.html` in dependency order:
 `map-generator.js` → `seasons.js` → `map-painter.js` → `sprite-renderer.js` →
-`sprite-examples.js` → `map-renderer.js` → `faction-manager.js` → `main.js`.
+`sprite-examples.js` → `map-renderer.js` → `core-module.js` → `faction-manager.js` →
+`turn-manager.js` → `economy-manager.js` → `faction-economy.js` →
+`construction-manager.js` → `army-manager.js` → `diplomacy-manager.js` → `ui-renderer.js`
+→ `main.js`.
 
-`faction-manager.js` reads `Resource`, `ResourceInfo`, `Terrain` from `map-generator.js`,
-so it must load after it.
+`core-module.js` defines `GameModule`, the base class every `*-manager.js` extends (it
+owns `attach`, `onChange`, `emit`). It must load before any manager. `faction-manager.js`
+reads `Resource`, `ResourceInfo`, `Terrain` from `map-generator.js`, so it must load after
+it.
 
 Architecture: `MapGenerator` fills flat typed arrays; `MapPainter` renders them once into
 an offscreen 1:1 canvas; `MapRenderer` is just a camera over that canvas. `FactionManager`

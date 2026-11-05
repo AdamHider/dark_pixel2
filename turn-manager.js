@@ -18,7 +18,7 @@
    Названия сезонов должны совпадать с ключами SEASONS в seasons.js; по умолчанию берётся порядок SEASON_ORDER оттуда же.
    ============================================================ */
 
-   class TurnManager {
+   class TurnManager extends GameModule {
     static get DEFAULTS() {
         return {
             seasons: typeof SEASON_ORDER !== 'undefined' ? [...SEASON_ORDER] : ['spring', 'summer', 'autumn', 'winter'],   // порядок сезонов в году (по умолчанию из seasons.js)
@@ -29,6 +29,7 @@
     }
 
     constructor(map, options = {}) {
+        super();
         this.options = { ...TurnManager.DEFAULTS, ...options };
         const { seasons, turnsPerSeason, startSeason } = this.options;
         if (!Array.isArray(seasons) || seasons.length === 0) throw new Error('Нужен хотя бы один сезон');
@@ -39,7 +40,6 @@
         this.turn = this.options.startTurn;       // сколько ходов сыграно (0 — игра только началась)
         this.version = 0;
         this.phases = [];                         // { name, run }
-        this.listeners = new Set();
         this.push();
     }
 
@@ -137,7 +137,7 @@
         };
         this.push();
         for (const phase of [...this.phases]) context.results[phase.name] = phase.run(context);
-        for (const listener of [...this.listeners]) listener(context);
+        this.emit(context);
         return context;
     }
 
@@ -150,8 +150,7 @@
 
     // Подписка на конец каждого хода: listener(контекст). Возвращает функцию отписки.
     onTurn(listener) {
-        this.listeners.add(listener);
-        return () => this.listeners.delete(listener);
+        return this.onChange(listener);
     }
 
     /* ============================================================

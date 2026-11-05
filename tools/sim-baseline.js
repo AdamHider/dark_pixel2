@@ -22,7 +22,7 @@ const ROOT = path.join(__dirname, '..');
 const BASELINE = path.join(__dirname, 'sim-baseline.json');
 
 const SCRIPTS = ['seasons.js', 'map-generator.js', 'map-painter.js', 'sprite-renderer.js', 'sprite-examples.js',
-    'faction-manager.js', 'turn-manager.js', 'economy-manager.js', 'faction-economy.js',
+    'core-module.js', 'faction-manager.js', 'turn-manager.js', 'economy-manager.js', 'faction-economy.js',
     'construction-manager.js', 'army-manager.js', 'diplomacy-manager.js'];
 
 /* Драйвер исполняется внутри vm-контекста: он видит классы как глобальные. */

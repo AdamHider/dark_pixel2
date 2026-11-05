@@ -19,7 +19,7 @@
    Выжженная клетка (лес или поле, снесённые в пустоту) не зарастает несколько ходов (EconomyManager: scorchedTurns).
    ============================================================ */
 
-   class ConstructionManager {
+   class ConstructionManager extends GameModule {
     static get DEFAULTS() {
         return {
             costs: {                                                      // цена приказа: gold, production — из запасов, population — жители
@@ -39,12 +39,12 @@
     }
 
     constructor(map, options = {}) {
+        super();
         const { economy, factions, ...rest } = options;
         if (!economy) throw new Error('ConstructionManager: нужен economy (EconomyManager)');
         this.options = { ...ConstructionManager.DEFAULTS, ...rest };
         this.economy = economy;
         this.factions = factions || null;
-        this.listeners = new Set();
         this.attach(map);
     }
 
@@ -55,15 +55,10 @@
 
     // Привязать менеджер к карте (в том числе заново сгенерированной): построек нет, мосты — как при генерации.
     attach(map) {
-        this.map = map;
+        super.attach(map);
         this.structures = [];                                   // башни: { type: 'tower', tile, faction, hp }
         this.baseCrossing = Uint8Array.from(map.crossing);      // мосты как при генерации (для сохранения)
         this.crossingChanges = new Map();                       // клетка -> 0 (мост разрушен) | 1 (построен)
-    }
-
-    onChange(listener) {
-        this.listeners.add(listener);
-        return () => this.listeners.delete(listener);
     }
 
     // Число башен фракции.
@@ -254,7 +249,7 @@
         for (const faction of this.map.factions) this.economy.setHoldings(faction.id, this.countsOf(faction.id));
         const crossingChanges = [...this.crossingChanges].map(([tile, crossing]) => ({ tile, crossing }));
         this.map.applyStructureState({ structures: this.structures.map(({ type, tile, faction }) => ({ type, tile, faction })), crossingChanges });
-        for (const listener of [...this.listeners]) listener(change);
+        this.emit(change);
     }
 
     /* ============================================================
@@ -272,6 +267,6 @@
         this.crossingChanges = new Map(state.crossings);
         this.map.applyStructureState({ structures: this.structures.map(({ type, tile, faction }) => ({ type, tile, faction })), crossingChanges: [...reverted, ...[...this.crossingChanges].map(([tile, crossing]) => ({ tile, crossing }))] });
         for (const faction of this.map.factions) this.economy.setHoldings(faction.id, this.countsOf(faction.id));
-        for (const listener of [...this.listeners]) listener({ action: 'load', type: null, tile: -1, factionId: -1 });
+        this.emit({ action: 'load', type: null, tile: -1, factionId: -1 });
     }
 }

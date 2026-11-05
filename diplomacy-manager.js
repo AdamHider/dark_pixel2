@@ -31,7 +31,7 @@
    - Журнал (log) хранит последние события: объявления войн, миры, союзы, дары.
    ============================================================ */
 
-   class DiplomacyManager {
+   class DiplomacyManager extends GameModule {
     static get DEFAULTS() {
         return {
             limit: 100,                                                   // отношения от −limit до +limit
@@ -55,13 +55,13 @@
     }
 
     constructor(map, options = {}) {
+        super();
         const { factions, economy, strength, ...rest } = options;
         if (!factions) throw new Error('DiplomacyManager: нужен factions (FactionManager)');
         this.options = { ...DiplomacyManager.DEFAULTS, ...rest };
         this.factions = factions;
         this.economy = economy || null;
         this.strength = strength || (() => 0);
-        this.listeners = new Set();
         this.attach(map);
     }
 
@@ -72,17 +72,12 @@
 
     // Привязать менеджер к карте (в том числе заново сгенерированной): все отношения нулевые, журнал пуст.
     attach(map) {
-        this.map = map;
+        super.attach(map);
         this.opinions = new Map();         // пара 'a-b' (a < b) -> отношения
         this.warSince = new Map();         // пара -> ход, с которого идёт война
         this.cooldowns = new Map();        // пара -> сколько ходов нельзя дарить
         this.log = [];                     // последние события, новые в конце: { turn, kind, from, to, text }
         this.turn = 0;
-    }
-
-    onChange(listener) {
-        this.listeners.add(listener);
-        return () => this.listeners.delete(listener);
     }
 
     pair(a, b) {
@@ -128,10 +123,6 @@
         if (this.log.length > this.options.logSize) this.log.shift();
         this.emit(entry);
         return entry;
-    }
-
-    emit(event) {
-        for (const listener of [...this.listeners]) listener(event);
     }
 
     /* ============================================================

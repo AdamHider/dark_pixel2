@@ -23,13 +23,19 @@ index.html          — разметка и кнопки интерфейса
     map-painter.js    — РЕНДЕР: превращает логическую карту в холст с пикселями
     map-renderer.js   — КАМЕРА: показывает нужный кусок холста, зум, выделение клетки
     sprite-renderer.js — объекты поверх карты (города, армии), рисуются по конфигу
+    core-module.js    — БАЗА МЕНЕДЖЕРОВ: GameModule (attach, onChange, emit)
     faction-manager.js — ФРАКЦИИ: территории, ресурсы, доход (отдельный от карты модуль)
+    *-manager.js      — МОДУЛИ: turn, economy, construction, army, diplomacy
 ```
 
 Порядок подключения в `index.html` важен: `map-generator.js` → `seasons.js` →
 `map-painter.js` → `sprite-renderer.js` → `sprite-examples.js` → `map-renderer.js` →
-`faction-manager.js` → `main.js`. `faction-manager.js` берёт константы `Resource`,
-`ResourceInfo`, `Terrain` из `map-generator.js`, поэтому идёт после него.
+`core-module.js` → `faction-manager.js` → `turn-manager.js` → `economy-manager.js` →
+`faction-economy.js` → `construction-manager.js` → `army-manager.js` →
+`diplomacy-manager.js` → `ui-renderer.js` → `main.js`. `core-module.js` идёт перед
+менеджерами: все `*-manager.js` наследуют `GameModule`. `faction-manager.js` берёт
+константы `Resource`, `ResourceInfo`, `Terrain` из `map-generator.js`, поэтому идёт после
+него.
 
 Ключевая идея производительности: **карта рисуется один раз** в большой скрытый холст
 в масштабе 1:1 (`MapPainter`), а `MapRenderer` только показывает из него нужный
@@ -651,6 +657,7 @@ createNoiseLayers → allocateLayers
 |---|---|
 | `seasons.js` | `SEASONS` (палитры + `SEASON_ORDER`), `DARK_SEASONS` (тёмный стиль, `toneHex`, `DARK_TONES`, `DARK_EXTRA`) |
 | `map-renderer.js` | `MAP_RENDERER`, `PUBLIC`, `FACTIONS`, `OBJECTS`, `CAMERA`, `SELECTION`, `RENDER`, `INPUT` |
+| `core-module.js` | `GAME_MODULE` (база `GameModule`: `attach`, `onChange`, `emit`) |
 | `faction-manager.js` | `FACTION_MANAGER`, `STATE`, `CONTROL`, `READ`, `START_FACTIONS` |
 | `economy-manager.js` | `ECONOMY_MANAGER`, `STATE`, `STEP`, `READ`, `SAVE`, `PLACEHOLDER` |
 | `turn-manager.js` | `TURN_MANAGER`, `CALENDAR`, `PHASES`, `TURN`, `SAVE` |

@@ -81,7 +81,7 @@ function seasonGrowthRates(season) {
     return fromSeasons || PLACEHOLDER_SEASON_RATES[season] || PLACEHOLDER_SEASON_RATES.summer;
 }
 
-class EconomyManager {
+class EconomyManager extends GameModule {
     static get DEFAULTS() {
         return {
             calculate: null,         // функция экономики фракции (см. контракт выше); null — ЗАГЛУШКА EconomyManager.placeholder
@@ -103,8 +103,8 @@ class EconomyManager {
     }
 
     constructor(map, options = {}) {
+        super();
         this.options = { ...EconomyManager.DEFAULTS, ...options };
-        this.listeners = new Set();
         this.version = 0;
         this.attach(map);
     }
@@ -116,7 +116,7 @@ class EconomyManager {
 
     // Привязать менеджер к карте (в том числе заново сгенерированной): экономическое состояние берётся с карты.
     attach(map) {
-        this.map = map;
+        super.attach(map);
         this.growth = Float32Array.from(map.growth);          // степень роста клеток
         this.population = Uint16Array.from(map.population);   // население клеток
         this.resource = Uint8Array.from(map.resource);        // ресурсы клеток (лес и поле могут появляться и исчезать)
@@ -138,11 +138,6 @@ class EconomyManager {
         }
         this.version++;
         this.map.applyEconomyState({ growth: this.growth, population: this.population, resourceChanges: changes, version: this.version });
-    }
-
-    onChange(listener) {
-        this.listeners.add(listener);
-        return () => this.listeners.delete(listener);
     }
 
     /* ============================================================
@@ -175,7 +170,7 @@ class EconomyManager {
         for (let i = 0; i < this.growth.length; i++) if (this.growth[i] !== growthBefore[i] || this.population[i] !== populationBefore[i]) summary.tilesChanged++;
         this.push();
         summary.visualChanged = map.visualVersion !== visualBefore;
-        for (const listener of [...this.listeners]) listener(summary, turn);
+        this.emit(summary, turn);
         return summary;
     }
 

@@ -57,7 +57,7 @@ function contrastColor(hex) {
     return '#' + mixed.map(v => v.toString(16).padStart(2, '0')).join('');
 }
 
-class FactionManager {
+class FactionManager extends GameModule {
     static get DEFAULTS() {
         return {
             // Стартовые фракции. regions — сколько регионов: число или [мин, макс].
@@ -79,8 +79,8 @@ class FactionManager {
     }
 
     constructor(map, options = {}) {
+        super();
         this.options = { ...FactionManager.DEFAULTS, ...options };
-        this.listeners = new Set();
         this.version = 0;
         this.attach(map);
     }
@@ -91,7 +91,7 @@ class FactionManager {
 
     // Привязать менеджер к карте (в том числе к заново сгенерированной): состояние сбрасывается и передаётся в карту.
     attach(map) {
-        this.map = map;
+        super.attach(map);
         this.factions = [];                                              // { id, name, color, secondaryColor, flag: { pattern, emblem }, capitalRegion, capitalTile, player }
         this.tileFaction = new Int16Array(map.size * map.size).fill(-1); // id фракции-владельца клетки, -1 — ничья
         this.relations = new Map();                                      // отношения пар фракций: 'a-b' (a < b) -> 'war' | 'peace' | 'alliance'
@@ -104,13 +104,7 @@ class FactionManager {
         if (typeof this.map.applyFactionState === 'function') {
             this.map.applyFactionState({ factions: this.factions, tileFaction: this.tileFaction, relations: [...this.relations], defaultRelation: this.options.defaultRelation, version: this.version });
         }
-        for (const listener of [...this.listeners]) listener(this, reason);
-    }
-
-    // Подписка на любые изменения: listener(менеджер, причина). Возвращает функцию отписки.
-    onChange(listener) {
-        this.listeners.add(listener);
-        return () => this.listeners.delete(listener);
+        this.emit(this, reason);
     }
 
     // Состояние для сохранения (обычный объект, годится для JSON).
