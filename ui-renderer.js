@@ -56,6 +56,15 @@ const FLAG_EMBLEMS = {
 class UIRenderer {
     constructor() {}
 
+    /* Общий DOM-хелпер: создать элемент с текстом и классом и вставить в parent. */
+    addText(parent, tag, text, className = '') {
+        const element = document.createElement(tag);
+        element.textContent = text;
+        if (className) element.className = className;
+        parent.appendChild(element);
+        return element;
+    }
+
     createElement(tag, className = '', attributes = {}, children = []) {
         const el = document.createElement(tag);
         if (className) el.className = className;

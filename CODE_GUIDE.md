@@ -17,7 +17,10 @@
 
 ```
 index.html          — разметка и кнопки интерфейса
-  main.js           — «клей»: создаёт генератор и рендерер, вешает обработчики кнопок
+  main.js           — «клей»: DOM-обвязка поверх шины событий Game
+  game.js           — ФАСАД: карта, рендерер, менеджеры, шина событий (Game, GameEmitter)
+  *-view.js         — HUD: army-view (армии), faction-view, player-view, turn-view, selection-view
+  ui-renderer.js    — общий сборщик DOM для панелей (UIRenderer)
     map-generator.js  — ЛОГИКА МИРА: рельеф, климат, ресурсы, реки, регионы, поселения, дороги
     seasons.js        — палитры сезонов (весна/лето/осень/зима) и тёмного стиля
     map-painter.js    — РЕНДЕР: превращает логическую карту в холст с пикселями
@@ -26,16 +29,19 @@ index.html          — разметка и кнопки интерфейса
     core-module.js    — БАЗА МЕНЕДЖЕРОВ: GameModule (attach, onChange, emit)
     faction-manager.js — ФРАКЦИИ: территории, ресурсы, доход (отдельный от карты модуль)
     *-manager.js      — МОДУЛИ: turn, economy, construction, army, diplomacy
+    *-view.js         — HUD-МОДУЛИ: army, faction, player, turn, selection
 ```
 
 Порядок подключения в `index.html` важен: `map-generator.js` → `seasons.js` →
 `map-painter.js` → `sprite-renderer.js` → `sprite-examples.js` → `map-renderer.js` →
 `core-module.js` → `faction-manager.js` → `turn-manager.js` → `economy-manager.js` →
 `faction-economy.js` → `construction-manager.js` → `army-manager.js` →
-`diplomacy-manager.js` → `ui-renderer.js` → `main.js`. `core-module.js` идёт перед
-менеджерами: все `*-manager.js` наследуют `GameModule`. `faction-manager.js` берёт
+`diplomacy-manager.js` → `army-view.js` → `game.js` → `ui-renderer.js` → `faction-view.js` →
+`player-view.js` → `turn-view.js` → `selection-view.js` → `main.js`. `core-module.js` идёт
+перед менеджерами: все `*-manager.js` наследуют `GameModule`. `faction-manager.js` берёт
 константы `Resource`, `ResourceInfo`, `Terrain` из `map-generator.js`, поэтому идёт после
-него.
+него. `*-view.js` — модули HUD: они читают состояние менеджеров через `Game` и рисуют
+DOM, но игровых правил не содержат; `UIRenderer` (`ui-renderer.js`) — общий сборщик DOM.
 
 Ключевая идея производительности: **карта рисуется один раз** в большой скрытый холст
 в масштабе 1:1 (`MapPainter`), а `MapRenderer` только показывает из него нужный
@@ -664,7 +670,12 @@ createNoiseLayers → allocateLayers
 | `diplomacy-manager.js` | `DIPLOMACY_MANAGER`, `STATE`, `ACTIONS`, `EVALUATION`, `STEP`, `SAVE` |
 | `army-view.js` | `ARMY_VIEW` (класс `ArmyView`: фокус, приказы, анимация, подсветка, спрайты, панель) |
 | `game.js` | `GAME` (класс `Game`: карта, рендерер, менеджеры, шина событий; класс `GameEmitter`) |
-| `main.js` | `MAIN`, `MANAGERS`, `NAMES`, `TURNS`, `ACTIONS`, `FACTIONS`, `PLAYER`, `ARMIES`, `CONSTRUCTION`, `SELECTION`, `BUTTONS`, `DEMO_OBJECTS` |
+| `ui-renderer.js` | `UI_RENDERER` (класс `UIRenderer`: общий сборщик DOM для панелей) |
+| `faction-view.js` | `FACTION_VIEW` (класс `FactionView`: панель фракций и дипломатии) |
+| `player-view.js` | `PLAYER_VIEW` (класс `PlayerView`: ресурсы, «Моя фракция», экономика, прогноз) |
+| `turn-view.js` | `TURN_VIEW` (класс `TurnView`: строка хода, сезоны, автоход) |
+| `selection-view.js` | `SELECTION_VIEW` (класс `SelectionView`: карточки выделения, передача региона, приказы) |
+| `main.js` | `MAIN`, `NAMES`, `ACTIONS`, `BUTTONS`, `DEMO_OBJECTS` |
 | `sprite-renderer.js` | `SPRITE_RENDERER`, `CONFIG`, `COLORS`, `LAYERS`, `OUTPUT` |
 | `sprite-examples.js` | `SPRITE_EXAMPLES` |
 
