@@ -24,10 +24,14 @@ Generation and painting are fully deterministic for a given seed, so any refacto
 verified byte-for-byte. The canonical check is the Node harness `tools/baseline.js`
 (79 cases: 3 seeds of generation + every view × season × mood × borders render + sprites):
 
-    node tools/baseline.js check    # after every change; must print "OK: 79 случаев"
+    node tools/baseline.js check        # map generation/painting/sprites: "OK: 79 случаев"
+    node tools/sim-baseline.js check    # managers/turns/armies: "OK: 7 шагов"
 
-`tools/baseline.json` is the frozen reference — do not regenerate it during a refactor, or
-you lose the safety net. `save` is only for deliberately accepting a new visual baseline.
+`tools/baseline.json` and `tools/sim-baseline.json` are the frozen references — do not
+regenerate them during a refactor, or you lose the safety net. `save` is only for
+deliberately accepting a new baseline. The sim harness drives the same manager wiring as
+`connectManagers()` in `main.js` (factions → economy → construction → armies → diplomacy →
+turns) through 6 deterministic turns with recruit/move/attack/build orders.
 
 Additional ad-hoc checks, if needed:
 
