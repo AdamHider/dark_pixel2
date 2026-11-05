@@ -74,15 +74,17 @@
 <script src="../map-painter.js"></script>
 <script src="../sprite-renderer.js"></script>
 <script src="../sprite-examples.js"></script>
+<script src="../sprite-bitmaps.js"></script>
 <script>
     const sprites = new SpriteRenderer();
     const $ = id => document.getElementById(id);
     const exampleSelect = $('example');
 
-    for (const name of Object.keys(SPRITE_EXAMPLES)) exampleSelect.add(new Option(name, name));
+    const CATALOG = { ...SPRITE_EXAMPLES, ...SPRITE_BITMAPS };
+    for (const name of Object.keys(CATALOG)) exampleSelect.add(new Option(name, name));
 
     function loadExample() {
-        $('json').value = JSON.stringify(SPRITE_EXAMPLES[exampleSelect.value], null, 2);
+        $('json').value = JSON.stringify(CATALOG[exampleSelect.value], null, 2);
         render();
     }
 

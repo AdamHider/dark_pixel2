@@ -16,7 +16,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const SCRIPTS = ['seasons.js', 'map-generator.js', 'core-module.js', 'faction-manager.js', 'turn-manager.js',
     'economy-manager.js', 'faction-economy.js', 'construction-manager.js', 'army-manager.js', 'diplomacy-manager.js',
-    'sprite-examples.js', 'army-view.js'];
+    'sprite-examples.js', 'sprite-bitmaps.js', 'army-view.js'];
 
 const HARNESS = `
 function __assert(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
@@ -74,6 +74,15 @@ function __test() {
         view.syncObjects();
         __assert(renderer.objects.length === armies.armies.length, 'число объектов != числу армий');
         __assert(renderer.objects.every(o => String(o.id).startsWith('army-')), 'id объекта не army-*');
+    });
+
+    check('спрайты: армия рисуется растром (sprite-bitmaps), цвет — цвет фракции', () => {
+        const config = renderer.objects[0].config;
+        __assert(config.id === 'army_black', 'армия не использует растровый спрайт: ' + config.id);
+        __assert(Array.isArray(config.pixels) && config.legend, 'у растра нет pixels/legend');
+        __assert(config.palette.color_5 === '$team', 'плащ не привязан к цвету фракции');
+        const team = renderer.objects[0].options.colors.team;
+        __assert(/^#[0-9a-f]{6}$/i.test(team), 'цвет фракции не передан: ' + team);
     });
 
     check('фокус: клик по своей армии берёт её в фокус', () => {

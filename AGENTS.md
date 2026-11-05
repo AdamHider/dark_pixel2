@@ -5,7 +5,7 @@
 Browser-based pixel-art fantasy map generator. Plain ES classes, no build step, no
 dependencies. Scripts are loaded in `index.html` in dependency order:
 `map-generator.js` → `seasons.js` → `map-painter.js` → `sprite-renderer.js` →
-`sprite-examples.js` → `map-renderer.js` → `core-module.js` → `faction-manager.js` →
+`sprite-examples.js` → `sprite-bitmaps.js` → `map-renderer.js` → `core-module.js` → `faction-manager.js` →
 `turn-manager.js` → `economy-manager.js` → `faction-economy.js` →
 `construction-manager.js` → `army-manager.js` → `diplomacy-manager.js` → `army-view.js` →
 `game.js` → `ui-renderer.js` → `faction-view.js` → `player-view.js` → `turn-view.js` →
@@ -70,6 +70,16 @@ Additional ad-hoc checks, if needed:
    compare whole renders cheaply. Cover views × seasons × moods.
 
 `node --check` refuses files without a `.js` extension, so copy to `/tmp/*.js` first.
+
+Two more Node tools help when a change is *meant* to alter the picture:
+
+    node tools/render-png.js map|sprite|all ...   # render a frame or sprite to a PNG (no deps)
+    node tools/paint-stats.js [size] [seed] [view] # grass/tree/clutter metrics per tile
+
+`tools/sprite-demo.html` previews both sprite catalogs: `SPRITE_EXAMPLES` (shape-based) and
+`SPRITE_BITMAPS` (raster). A bitmap config puts `pixels` + `legend` at the top level and
+`SpriteRenderer.normalize` turns them into one `pixels` layer; `$team` in a palette entry
+takes the colour from `options.colors.team`. Armies are drawn from `SPRITE_BITMAPS.army_black`.
 
 `tools/map-test.html` is the in-browser tester: it runs generation + painting, hashes the
 result, and compares against a saved baseline, so optimizations can be tracked without

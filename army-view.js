@@ -127,14 +127,20 @@ class ArmyView extends ViewModule {
     /* ---------- спрайты ---------- */
 
     // Армии (цвет — основной цвет фракции) и демо-объекты.
+    // Фигурка армии — растровый спрайт (sprite-bitmaps.js): тот же формат, что у black_warrior.
     syncObjects() {
         const size = this.generator.size;
         const objects = this.armies ? this.armies.armies.map(a => ({
-            id: `army-${a.id}`, config: SPRITE_EXAMPLES.army,
+            id: `army-${a.id}`, config: this.armySprite(),
             tile: this.animation && this.animation.armyId === a.id ? this.animatedTile(this.animation) : [a.tile % size, Math.floor(a.tile / size)],
             options: { colors: { team: this.generator.factions[a.faction].color } }
         })) : [];
         this.renderer.setObjects([...objects, ...this.demoObjects]);
+    }
+
+    // Растр армии; если sprite-bitmaps.js не подключён — фигурный спрайт из sprite-examples.js.
+    armySprite() {
+        return (typeof SPRITE_BITMAPS !== 'undefined' && SPRITE_BITMAPS.army_black) || SPRITE_EXAMPLES.army;
     }
 
     setDemoObjects(list) {

@@ -93,14 +93,22 @@ class SpriteRenderer {
 
     // Применяет сезонный вариант: его палитра дополняет общую, layers заменяют, addLayers дополняют слои.
     resolveConfig(config, options) {
-        const variant = config.variants && options.season ? config.variants[options.season] : null;
-        if (!variant) return config;
+        const base = this.normalize(config);
+        const variant = base.variants && options.season ? base.variants[options.season] : null;
+        if (!variant) return base;
         return {
-            ...config,
+            ...base,
             ...variant,
-            palette: { ...config.palette, ...variant.palette },
-            layers: variant.layers || [...(config.layers || []), ...(variant.addLayers || [])]
+            palette: { ...base.palette, ...variant.palette },
+            layers: variant.layers || [...(base.layers || []), ...(variant.addLayers || [])]
         };
+    }
+
+    // Конфиг может задать растр прямо в корне (pixels + legend) — тогда это один слой.
+    // Так хранятся растровые спрайты (например black_warrior): pixels — строки, legend — буква -> цвет палитры.
+    normalize(config) {
+        if (!config.pixels || config.layers) return config;
+        return { ...config, layers: [{ shape: 'pixels', x: 0, y: 0, rows: config.pixels, legend: config.legend || {} }] };
     }
 
     isActive(layer, options, frame) {

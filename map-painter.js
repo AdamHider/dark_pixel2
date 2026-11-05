@@ -2593,7 +2593,7 @@ MapPaint.Chunks = class Chunks {
 {
     MapPaint.Texture = {
         defaults: {
-            grassDensity: 1  // густота пучков травы (множитель)
+            grassDensity: 1     // густота пучков травы (множитель)
         },
 
         enabled: p => p.layers.texture,
@@ -2601,7 +2601,7 @@ MapPaint.Chunks = class Chunks {
         paint(p) {
             const map = p.map;
             const { T } = p.dim;
-            const speckCount = Math.round(T * T / 16);
+            const speckCount = Math.round(T * T / 24);
             const specks = this.speckLayout(p, speckCount);
 
             p.forEachRegionTile((x, y) => {
@@ -2654,10 +2654,10 @@ MapPaint.Chunks = class Chunks {
             const colors = p.pal.groundDetail;
             const map = p.map;
             if (!colors || map.terrain[i] !== Terrain.PLAIN || map.biome[i] !== Biome.GRASSLAND || map.river[i] || map.resource[i] === Resource.SETTLEMENT || map.roadLevel[i] > 0) return;
-            if (tileHash(x, y, 100) % 3 !== 0) return;
+            if (tileHash(x, y, 100) % 4 !== 0) return;
 
             const { T } = p.dim;
-            for (let k = 0; k < 3; k++) {
+            for (let k = 0; k < 2; k++) {
                 const h = tileHash(x, y, 101 + k);
                 p.put(x * T + (h % T), y * T + ((h >>> 8) % T), hexToPacked(colors[h % colors.length]));
             }
@@ -2686,15 +2686,16 @@ MapPaint.Chunks = class Chunks {
                 const bx = x * T + (h % T);
                 const by = y * T + ((h >>> 8) % T);
                 const ground = p.pixels[Math.min(by, W - 1) * W + Math.min(bx, W - 1)];
-                const dark = shadeFast(ground, -56);
-                const light = shadeFast(ground, 46);
-                const blades = 2 + ((h >>> 16) % 2);
+                // Спокойные оттенки: трава не должна спорить с землёй (раньше было -56/+46 — слишком контрастно).
+                const dark = shadeFast(ground, -34);
+                const light = shadeFast(ground, 28);
                 const lean = ((h >>> 18) % 3) - 1;
+                const blades = 1 + ((h >>> 16) & 1);
 
                 for (let b = 0; b < blades; b++) {
-                    const bladeHeight = p.px(2) + 1 + ((h >>> (20 + b)) & 1);
+                    const bladeHeight = p.px(1) + 1 + ((h >>> (20 + b)) & 1);
                     for (let step = 0; step < bladeHeight; step++) {
-                        p.putGround(bx + b + (step >= 2 ? lean : 0), by - step, step === bladeHeight - 1 ? light : dark);
+                        p.putGround(bx + b + (step >= 1 ? lean : 0), by - step, step === bladeHeight - 1 ? light : dark);
                     }
                 }
             }
@@ -3553,10 +3554,10 @@ MapPaint.Chunks = class Chunks {
             const withSnow = conifer && p.pal.snowOnConifers && p.seasonalTemperature(i) < SNOW_TEMPERATURE;
             const palmShare = PALM_SHARE[map.biome[i]];            // доля пальм среди деревьев жаркого биома; у остальных биомов её нет
 
-            const slots = [[0.26, 0.52], [0.74, 0.46], [0.5, 0.96]];
+            const slots = [[0.22, 0.55], [0.62, 0.42], [0.44, 0.86], [0.82, 0.68], [0.3, 0.24]];
             const start = tileHash(x, y, 30) % slots.length;
-            // Сколько деревьев растёт в клетке: полный лес — 2–3, молодой (экономика ещё не вырастила) — меньше, вплоть до одного.
-            const full = 2 + (tileHash(x, y, 31) % 3 === 0 ? 1 : 0);
+            // Сколько деревьев растёт в клетке: полный лес — 3–4 (деревья мелкие, поэтому их больше), молодой — меньше, вплоть до одного.
+            const full = 3 + (tileHash(x, y, 31) % 2);
             const stage = map.growth ? growthStage(map.growth[i]) : GROWTH_STAGES;
             const count = stage === 0 ? 0 : Math.max(1, Math.round(full * stage / GROWTH_STAGES));
 
@@ -3590,7 +3591,7 @@ MapPaint.Chunks = class Chunks {
         drawPalm(p, cx, base, pick, dead) {
             const pal = p.pal;
             const lean = (pick >>> 4) % 2 ? 1 : -1;                 // в какую сторону изгибается ствол
-            const height = p.px(9) + (pick % 2);
+            const height = p.px(7) + (pick % 2);
             const trunk = shadePacked(p.packed.trunk, 0.12);
             const ring = shadePacked(p.packed.trunk, -0.22);
             let frond = hexToPacked(pal.broadleaf[pick % pal.broadleaf.length]);
@@ -3598,7 +3599,7 @@ MapPaint.Chunks = class Chunks {
             const light = shadePacked(frond, 0.25);
             const dark = shadePacked(frond, -0.3);
 
-            this.drawShadow(p, cx, base, p.px(5));
+            this.drawShadow(p, cx, base, p.px(4));
             let x = cx;                                              // ствол: вверх, на двух третях высоты сдвигается на пиксель
             for (let h = 0; h < height; h++) {
                 if (h === Math.floor(height * 0.65)) x += lean;
@@ -3606,7 +3607,7 @@ MapPaint.Chunks = class Chunks {
             }
 
             const crownY = base - height;
-            const reach = Math.max(2, p.px(4));
+            const reach = Math.max(2, p.px(3));
             for (const side of [-1, 1]) {                            // листья в стороны: чем дальше от ствола, тем ниже
                 for (let k = 1; k <= reach; k++) {
                     const droop = Math.floor((k * k) / (reach + 1)) + (dead ? 1 : 0);
@@ -3631,7 +3632,7 @@ MapPaint.Chunks = class Chunks {
             const light = shadePacked(body, 0.22);
             const dark = shadePacked(body, -0.3);
             const wide = p.px(2) >= 2 ? 2 : 1;                       // ствол в 2 пикселя шириной (в 1 — на мелких клетках)
-            const height = p.px(8) + (pick % 3);
+            const height = p.px(6) + (pick % 3);
             const left = cx - (wide >> 1);
 
             this.drawShadow(p, cx, base, p.px(4));
@@ -3675,9 +3676,9 @@ MapPaint.Chunks = class Chunks {
                 return;
             }
 
-            const width = p.px(7) + (pick % 2);
+            const width = p.px(5) + (pick % 2);
             const height = width;
-            const trunkHeight = p.px(2) + 1;
+            const trunkHeight = p.px(1) + 1;
             const trunkWidth = width >= 7 ? 2 : 1;
             const color = hexToPacked(pal.broadleaf[pick % pal.broadleaf.length]);
             const light = shadePacked(color, 0.22);
@@ -3695,7 +3696,7 @@ MapPaint.Chunks = class Chunks {
                 for (let x = x0; x <= x1; x++) {
                     const lean = (x - cx) + (row - height / 2);  // < 0 — верх-лево (освещено), > 0 — низ-право (тень)
                     let shade = lean < -width * 0.2 ? light : lean > width * 0.28 ? dark : color;
-                    if (hashUnit(x, top + row, 77) < 0.12) shade = shade === dark ? color : dark; // листва «шуршит»
+                    if (hashUnit(x, top + row, 77) < 0.07) shade = shade === dark ? color : dark; // листва «шуршит»
                     p.put(x, top + row, shade);
                 }
             }
@@ -3711,8 +3712,8 @@ MapPaint.Chunks = class Chunks {
         // Голое дерево (зима): ствол и несколько веток.
         drawBareTree(p, cx, base, pick) {
             const trunk = p.packed.trunk;
-            const height = p.px(8);
-            this.drawShadow(p, cx, base, p.px(5));
+            const height = p.px(6);
+            this.drawShadow(p, cx, base, p.px(4));
             p.rect(cx, base - height, 1, height, trunk);
 
             const side = pick % 2 ? 1 : -1;
@@ -3734,12 +3735,12 @@ MapPaint.Chunks = class Chunks {
             const color = hexToPacked(pal.conifer[pick % pal.conifer.length]);
             const light = shadePacked(color, 0.2);
             const dark = shadePacked(color, -0.3);
-            const height = p.px(10) + (pick % 2);
-            const maxHalf = Math.max(2, Math.round(p.px(6) / 2));
-            const trunkHeight = p.px(2);
+            const height = p.px(8) + (pick % 2);
+            const maxHalf = Math.max(2, Math.round(p.px(5) / 2));
+            const trunkHeight = p.px(1);
             const top = base - trunkHeight - height + 1;
 
-            this.drawShadow(p, cx, base, p.px(6));
+            this.drawShadow(p, cx, base, p.px(5));
             p.rect(cx, base - trunkHeight, 1, trunkHeight, p.packed.trunk);
 
             for (let row = 0; row < height; row++) {
