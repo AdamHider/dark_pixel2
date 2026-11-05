@@ -7,8 +7,8 @@ dependencies. Scripts are loaded in `index.html` in dependency order:
 `map-generator.js` → `seasons.js` → `map-painter.js` → `sprite-renderer.js` →
 `sprite-examples.js` → `map-renderer.js` → `core-module.js` → `faction-manager.js` →
 `turn-manager.js` → `economy-manager.js` → `faction-economy.js` →
-`construction-manager.js` → `army-manager.js` → `diplomacy-manager.js` → `ui-renderer.js`
-→ `main.js`.
+`construction-manager.js` → `army-manager.js` → `diplomacy-manager.js` → `army-view.js` →
+`ui-renderer.js` → `main.js`.
 
 `core-module.js` defines `GameModule`, the base class every `*-manager.js` extends (it
 owns `attach`, `onChange`, `emit`). It must load before any manager. `faction-manager.js`
@@ -31,6 +31,7 @@ verified byte-for-byte. The canonical check is the Node harness `tools/baseline.
 
     node tools/baseline.js check        # map generation/painting/sprites: "OK: 79 случаев"
     node tools/sim-baseline.js check    # managers/turns/armies: "OK: 7 шагов"
+    node tools/army-view-test.js        # ArmyView focus/orders/highlights: "OK: 8 проверок"
 
 `tools/baseline.json` and `tools/sim-baseline.json` are the frozen references — do not
 regenerate them during a refactor, or you lose the safety net. `save` is only for

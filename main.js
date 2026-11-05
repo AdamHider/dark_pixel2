@@ -39,6 +39,7 @@ const START_FACTIONS = [                            // стартовые фра
 ];   // secondaryColor и flag можно не указывать: подберутся сами (см. FactionManager.makeFaction)
 
 let factions = null, turns = null, economy = null, construction = null, armies = null, diplomacy = null;  // создаются после первой генерации (см. connectManagers)
+let armyView = null;   // взаимодействие с армиями: фокус, приказы, анимация, подсветка, спрайты, панель (army-view.js)
 
 function connectManagers() {
     factions = new FactionManager(generator, { factions: START_FACTIONS });
@@ -47,7 +48,6 @@ function connectManagers() {
     construction = new ConstructionManager(generator, { economy, factions });     // строительство и снос: мосты, башни, армии, леса и поля (construction-manager.js)
     construction.onChange(onConstructionChange);
     armies = new ArmyManager(generator, { economy, factions, construction });       // армии: найм, движение, бой, захват (army-manager.js)
-    armies.onChange(onArmiesChange);
     diplomacy = new DiplomacyManager(generator, {                                   // дипломатия: отношения и действия (diplomacy-manager.js)
         factions, economy, strength: id => (armies ? armies.armiesOf(id).reduce((sum, a) => sum + a.strength, 0) : 0)
     });
@@ -61,7 +61,7 @@ function connectManagers() {
     factions.onChange(() => {
         refreshFactionPanel();
         refreshPlayerUI();
-        syncHighlights();
+        if (armyView) armyView.syncHighlights();
         refreshSelection();
     });
 }
@@ -245,11 +245,17 @@ function buildMap() {
         construction.attach(generator);
         armies.attach(generator);
         diplomacy.attach(generator);
-        selectedArmyId = null;
-        hoverArmyId = null;
-        armyAnimation = null;
-        highlightSignature = '';
+        armyView.attach(generator);
         turns.reset();
+    }
+
+    if (!armyView) {
+        armyView = new ArmyView();
+        armyView.setup({ armies, factions, generator, renderer, construction, controls: armyControls, info, ui: uiRenderer, notify });
+        armyView.onChange = () => { refreshFactionPanel(); refreshPlayerUI(); refreshSelection(); };
+        armyView.onSelection = () => refreshSelection();
+        renderer.onHover = tile => armyView.handleHover(tile);
+        renderer.onObjectClick = object => armyView.handleObjectClick(object);
     }
 
     renderer.refresh();     // карта рисуется один раз и уже в сезоне, с которого начинается игра
@@ -431,201 +437,11 @@ function checkForecast() {
 
 /* ============================================================
    SECTION: ARMIES
-   Армии, как в Total War: клик по своей армии делает её активной (в фокусе); пока фокус есть, подсвечена область движения (гладкое пятно
-   по суше) и цели атаки.
-     клик по области движения  — армия идёт туда (плавно, с анимацией), фокус снимается;
-     клик по красной цели      — армия атакует (подходит вплотную), фокус снимается;
-     клик по другой своей армии — фокус переходит на неё;
-     клик куда угодно ещё, Esc — фокус снимается (клик при этом работает как обычный выбор клетки).
-   Зона перехвата подсвечивается только при наведении курсора на армию (любую). Правила — army-manager.js.
+   Взаимодействие с армиями вынесено в army-view.js (класс ArmyView):
+   фокус, приказы, анимация, подсветка, спрайты и панель армии. Здесь — только DOM.
    ============================================================ */
 
 const armyControls = document.getElementById('army-controls');
-const ANIMATE_ARMIES = true;           // двигать фигурки армий плавно (позиции между клетками — дробные координаты tile); false — телепорт
-const ARMY_TILES_PER_SECOND = 7;       // скорость анимации
-const HIGHLIGHT = { MOVE: 1, ZONE: 2, TARGET: 4, SELF: 8 };    // виды подсветки (битовые флаги, см. map.highlights)
-let selectedArmyId = null;             // армия в фокусе (id) или null
-let hoverArmyId = null;                // армия под курсором (для подсветки её зоны перехвата)
-let highlightSignature = '';           // что сейчас подсвечено (чтобы не перерисовывать слой зря)
-let armyAnimation = null;              // { armyId, points: [[x, y]], cumulative, total, start, duration }
-
-function selectedArmy() {
-    return selectedArmyId === null || !armies ? null : armies.get(selectedArmyId);
-}
-
-// Взять армию в фокус (null — снять фокус).
-function focusArmy(id) {
-    selectedArmyId = id;
-    syncHighlights();
-    refreshSelection();
-}
-
-// Подсветка: область движения и цели выбранной армии, зона перехвата армии под курсором. Рисуется в лёгком слое фракций:
-// карта не перерисовывается и масштаб не сбрасывается.
-function syncHighlights() {
-    const army = selectedArmy();
-    if (!army) selectedArmyId = null;
-    const list = [];
-    if (army) {
-        const preview = armies.preview(army);
-        for (const tile of preview.reachable) list.push({ tile, kind: HIGHLIGHT.MOVE });
-        for (const tile of preview.targets) list.push({ tile, kind: HIGHLIGHT.TARGET });
-        list.push({ tile: preview.tile, kind: HIGHLIGHT.SELF });
-    }
-    const hovered = hoverArmyId !== null && armies ? armies.get(hoverArmyId) : null;
-    if (hovered) for (const tile of armies.zoneTiles(hovered.tile, hovered.zone)) if (generator.isLand(tile)) list.push({ tile, kind: HIGHLIGHT.ZONE });
-    const signature = list.map(h => `${h.tile}:${h.kind}`).join(',');
-    if (signature === highlightSignature) return;
-    highlightSignature = signature;
-    generator.applyStructureState({ highlights: list });
-}
-
-// После любого приказа армии, найма и хода.
-function onArmiesChange() {
-    syncObjects();
-    refreshFactionPanel();
-    refreshPlayerUI();
-    syncHighlights();
-    refreshSelection();
-}
-
-function describeArmy(army) {
-    const faction = generator.factions[army.faction];
-    return {
-        id: army.id, name: `Армия ${army.id}`, factionName: faction.name, mine: !!(factions.playerFaction && army.faction === factions.playerFaction.id),
-        strength: army.strength, maxStrength: armies.options.army.strength, moves: army.moves, movesLeft: army.movesLeft,
-        x: army.tile % generator.size, y: Math.floor(army.tile / generator.size)
-    };
-}
-
-/* ---------- клики и наведение ---------- */
-
-// Клик по клетке карты (или по фигурке армии): управляет фокусом и приказами выбранной армии. Идемпотентен: клик по фигурке и по клетке под ней
-// можно обработать оба раза без побочных эффектов.
-function handleArmyClick(tile) {
-    const player = factions && factions.playerFaction;
-    if (!armies || !player) return;
-    if (!tile) { if (selectedArmyId !== null) focusArmy(null); return; }
-    const index = tile.y * generator.size + tile.x;
-    const here = armies.armyAt(index);
-    const army = selectedArmy();
-
-    if (!army || army.faction !== player.id) {
-        if (here && here.faction === player.id) focusArmy(here.id);          // своя армия: в фокус
-        return;
-    }
-    if (index === army.tile) return;                                        // повторный клик по армии в фокусе: фокус остаётся
-    if (here && here.faction === player.id) { focusArmy(here.id); return; } // другая своя армия: фокус переходит на неё
-
-    const attack = armies.canAttack(army.id, index);
-    if (attack.ok) { orderAttack(army, index, attack); return; }
-    const reach = armies.reachable(army);
-    if (reach.has(index)) { orderMove(army, index, reach); return; }
-    focusArmy(null);                                                        // мимо области движения: фокус снимается
-}
-
-function orderMove(army, tile, reach) {
-    const path = armies.path(army, tile, reach);
-    startArmyAnimation(army.id, [army.tile, ...path]);
-    selectedArmyId = null;                                                  // фокус снимается сразу: подсветка исчезает, армия идёт
-    try {
-        armies.move(army.id, tile);
-    } catch (error) {
-        armyAnimation = null;
-        reportOrderError(error);
-        syncObjects();
-    }
-}
-
-function orderAttack(army, tile, attack) {
-    const path = attack.stand !== army.tile ? armies.path(army, attack.stand) : [];
-    startArmyAnimation(army.id, [army.tile, ...path]);
-    selectedArmyId = null;
-    try {
-        const result = armies.attack(army.id, tile);
-        notify(`Бой: потери — ${result.attackerLoss} у атакующих, ${result.defenderLoss} у обороняющихся${result.defenderDestroyed ? '; цель уничтожена' : ''}${result.attackerDestroyed ? '; ваша армия уничтожена' : ''}`);
-    } catch (error) {
-        armyAnimation = null;
-        reportOrderError(error);
-        syncObjects();
-    }
-}
-
-// Наведение: зона перехвата подсвечивается, пока курсор над армией.
-renderer.onHover = tile => {
-    //if (tile) info.textContent = describeTile(tile);
-    const army = tile && Number.isInteger(tile.x) && armies ? armies.armyAt(tile.y * generator.size + tile.x) : null;
-    const id = army ? army.id : null;
-    if (id === hoverArmyId) return;
-    hoverArmyId = id;
-    syncHighlights();
-};
-
-/* ---------- анимация перемещения ---------- */
-
-// Плавное движение фигурки по ломаной из клеток (tiles — от клетки старта до цели). Логика хода уже выполнена, анимация только показывает путь.
-function startArmyAnimation(armyId, tiles) {
-    if (!ANIMATE_ARMIES || tiles.length < 2) return;
-    const size = generator.size;
-    const points = tiles.map(t => [t % size, Math.floor(t / size)]);
-    const cumulative = [0];
-    for (let k = 1; k < points.length; k++) cumulative.push(cumulative[k - 1] + Math.hypot(points[k][0] - points[k - 1][0], points[k][1] - points[k - 1][1]));
-    const total = cumulative[cumulative.length - 1];
-    armyAnimation = { armyId, points, cumulative, total, start: performance.now(), duration: Math.max(250, (total / ARMY_TILES_PER_SECOND) * 1000) };
-    requestAnimationFrame(stepArmyAnimation);
-}
-
-function stepArmyAnimation() {
-    if (!armyAnimation) return;
-    if (performance.now() - armyAnimation.start >= armyAnimation.duration) armyAnimation = null;
-    syncObjects();
-    if (armyAnimation) requestAnimationFrame(stepArmyAnimation);
-}
-
-// Положение фигурки в анимации (дробные координаты клетки): плавный разгон и торможение по длине пути.
-function animatedArmyTile(animation) {
-    const t = Math.min(1, (performance.now() - animation.start) / animation.duration);
-    const distance = (t * t * (3 - 2 * t)) * animation.total;
-    let k = 1;
-    while (k < animation.points.length - 1 && animation.cumulative[k] < distance) k++;
-    const segment = animation.cumulative[k] - animation.cumulative[k - 1] || 1;
-    const f = Math.min(1, Math.max(0, (distance - animation.cumulative[k - 1]) / segment));
-    const [x0, y0] = animation.points[k - 1], [x1, y1] = animation.points[k];
-    return [x0 + (x1 - x0) * f, y0 + (y1 - y0) * f];
-}
-
-/* ---------- панель армии в окне региона ---------- */
-
-// Карточка армии в фокусе (и чужой на выбранной клетке), «Распустить армию» и «Нанять армию» в своём поселении.
-function showArmyControls(tile) {
-    const player = factions && factions.playerFaction;
-    const index = tile ? tile.y * generator.size + tile.x : -1;
-    if (!player || !armies) {
-        uiRenderer.renderArmyControls(armyControls, null, {});
-        return;
-    }
-    if (index < 0) {                                    // Esc или клик мимо: фокус снимается
-        if (selectedArmyId !== null) { selectedArmyId = null; syncHighlights(); }
-        uiRenderer.renderArmyControls(armyControls, null, {});
-        return;
-    }
-
-    const army = selectedArmy();
-    const orders = [];
-    if (army && army.faction === player.id) orders.push({ label: 'Распустить армию', ok: true, danger: true, run: () => { selectedArmyId = null; armies.disband(army.id); } });
-    const recruit = armies.canRecruit(player.id, index);
-    if (recruit.fits) orders.push({ label: 'Нанять армию', costText: construction.describeCost(recruit.cost), ok: recruit.ok, reason: recruit.reason, run: () => focusArmy(armies.recruit(player.id, index).id) });
-
-    const other = armies.armyAt(index);
-    uiRenderer.renderArmyControls(armyControls, {
-        army: army ? describeArmy(army) : null,
-        other: other && other !== army ? describeArmy(other) : null,
-        orders
-    }, {
-        onOrder: order => { try { order.run(); } catch (error) { reportOrderError(error); } },
-        onDeselect: () => focusArmy(null)
-    });
-}
 
 /* ============================================================
    SECTION: CONSTRUCTION
@@ -634,23 +450,11 @@ function showArmyControls(tile) {
 
 const buildControls = document.getElementById('build-controls');
 const edictControls = document.getElementById('edict-controls');
-let demoObjects = [];       // демо-объекты кнопки «Объекты» (см. DEMO_OBJECTS): рисуются вместе с армиями
-
-// Объекты спрайтового рендерера: армии (цвет — основной цвет фракции) и демо-объекты.
-function syncObjects() {
-    const size = generator.size;
-    const objects = armies ? armies.armies.map(a => ({
-        id: `army-${a.id}`, config: SPRITE_EXAMPLES.army,
-        tile: armyAnimation && armyAnimation.armyId === a.id ? animatedArmyTile(armyAnimation) : [a.tile % size, Math.floor(a.tile / size)],
-        options: { colors: { team: generator.factions[a.faction].color } }
-    })) : [];
-    renderer.setObjects([...objects, ...demoObjects]);
-}
 
 // После любого приказа: армии, карта (мосты, башни, леса), панели и выделение.
 function onConstructionChange() {
-    syncObjects();
-    syncHighlights();              // башни и клетки меняют зоны перехвата; саму карту (мосты, башни, леса) рендерер перерисует по сообщению об изменении
+    armyView.syncObjects();
+    armyView.syncHighlights();     // башни и клетки меняют зоны перехвата; саму карту (мосты, башни, леса) рендерер перерисует по сообщению об изменении
     refreshFactionPanel();
     refreshPlayerUI();
     refreshSelection();
@@ -733,7 +537,7 @@ function showEdictControls(region) {
             selectionPanel.hidden = true;
             selectionPanel.replaceChildren();
             showOwnerControls(null);
-            showArmyControls(null);
+            armyView.showControls(null);
             showBuildControls(null);
             showEdictControls(null);
             return;
@@ -753,13 +557,13 @@ function showEdictControls(region) {
         selectionPanel.appendChild(tileCardEl);
         
         showOwnerControls(region);
-        showArmyControls(tile);
+        armyView.showControls(tile);
         showBuildControls(tile);
         showEdictControls(region);
     }
    
     renderer.onSelect = (tile, region) => {
-        handleArmyClick(tile);                 // фокус и приказы армий (до показа клетки: после хода карточка уже обновлена)
+        armyView.handleClick(tile);            // фокус и приказы армий (до показа клетки: после хода карточка уже обновлена)
         showSelection(tile, region);
     };
     
@@ -800,8 +604,7 @@ demoButton.addEventListener('click', () => {
     const on = demoButton.getAttribute('aria-pressed') !== 'true';
     demoButton.setAttribute('aria-pressed', on);
     if (!on) {
-        demoObjects = [];
-        syncObjects();
+        armyView.setDemoObjects([]);
         return;
     }
 
@@ -813,18 +616,12 @@ demoButton.addEventListener('click', () => {
                       - Math.hypot(b % generator.size - center, Math.floor(b / generator.size) - center));
     const spot = k => [free[k * 6] % generator.size, Math.floor(free[k * 6] / generator.size)];
 
-    demoObjects = [
+    armyView.setDemoObjects([
         { id: 'city-1', config: SPRITE_EXAMPLES.city, tile: spot(0), options: { colors: { team: '#c0392b' } } },
         { id: 'village-1', config: SPRITE_EXAMPLES.village, tile: spot(1) },
         { id: 'army-demo', config: SPRITE_EXAMPLES.army, tile: spot(2), options: { colors: { team: '#2e86c1' }, flags: ['marching'] } }
-    ];
-    syncObjects();
+    ]);
 });
-renderer.onObjectClick = object => {
-    if (info) info.textContent = `Объект: ${object.id}`;
-    const army = String(object.id).startsWith('army-') && armies ? armies.get(Number(String(object.id).slice(5))) : null;
-    if (army) handleArmyClick({ x: army.tile % generator.size, y: Math.floor(army.tile / generator.size) });   // клик по фигурке — как по её клетке
-};
 
 function toggleButton(id, apply) {
     const button = document.getElementById(id);
