@@ -61,12 +61,23 @@ class FactionManager extends GameModule {
     static get DEFAULTS() {
         return {
             // Стартовые фракции. regions — сколько регионов: число или [мин, макс].
+            // Цвета подобраны так, чтобы щит армии (поле — color, знак — secondaryColor) читался на карте.
             factions: [
                 { name: 'Красные', color: '#d94a3a', secondaryColor: '#f2d27a', flag: { pattern: 'pale', emblem: 'star' }, regions: [4, 5] },
                 { name: 'Синие', color: '#3b6fd4', secondaryColor: '#e8ecf4', flag: { pattern: 'chevron', emblem: 'tower' }, regions: [4, 5] },
-                { name: 'Желтые', color: '#FFDB58', secondaryColor: '#7a4a1c', flag: { pattern: 'fess', emblem: 'circle' }, regions: [4, 5] },
-                { name: 'Розовые', color: '#FFB6C1', secondaryColor: '#8c2f58', flag: { pattern: 'bend', emblem: 'diamond' }, regions: [4, 5] },
-                { name: 'Зелёные', color: '#808000', secondaryColor: '#e6e0a8', flag: { pattern: 'saltire', emblem: 'cross' }, regions: [4, 5] }
+                { name: 'Жёлтые', color: '#e8c33a', secondaryColor: '#6d4a12', flag: { pattern: 'fess', emblem: 'circle' }, regions: [4, 5] },
+                { name: 'Розовые', color: '#e08ab0', secondaryColor: '#6d2144', flag: { pattern: 'bend', emblem: 'diamond' }, regions: [4, 5] },
+                { name: 'Зелёные', color: '#4f8f3a', secondaryColor: '#e6e0a8', flag: { pattern: 'saltire', emblem: 'cross' }, regions: [4, 5] },
+                { name: 'Оранжевые', color: '#e0812f', secondaryColor: '#3a2410', flag: { pattern: 'stripes', emblem: 'star' }, regions: [4, 5] },
+                { name: 'Фиолетовые', color: '#7a4fbf', secondaryColor: '#efe3ff', flag: { pattern: 'cross', emblem: 'tower' }, regions: [4, 5] },
+                { name: 'Бирюзовые', color: '#2f9e9e', secondaryColor: '#eafffb', flag: { pattern: 'solid', emblem: 'circle' }, regions: [4, 5] },
+                { name: 'Коричневые', color: '#8a5a33', secondaryColor: '#f0dcc0', flag: { pattern: 'pale', emblem: 'diamond' }, regions: [4, 5] },
+                { name: 'Серые', color: '#7d8288', secondaryColor: '#20242a', flag: { pattern: 'chevron', emblem: 'cross' }, regions: [4, 5] },
+                { name: 'Салатовые', color: '#9ac23f', secondaryColor: '#3d4a12', flag: { pattern: 'fess', emblem: 'star' }, regions: [4, 5] },
+                { name: 'Индиго', color: '#4a3fb0', secondaryColor: '#d8d3ff', flag: { pattern: 'bend', emblem: 'tower' }, regions: [4, 5] },
+                { name: 'Малиновые', color: '#b02f5a', secondaryColor: '#ffd9e2', flag: { pattern: 'saltire', emblem: 'circle' }, regions: [4, 5] },
+                { name: 'Песочные', color: '#c9a86a', secondaryColor: '#4a3820', flag: { pattern: 'stripes', emblem: 'diamond' }, regions: [4, 5] },
+                { name: 'Стальные', color: '#56707f', secondaryColor: '#d6e4ea', flag: { pattern: 'cross', emblem: 'star' }, regions: [4, 5] }
             ],
             playerFaction: 0,  // какая из стартовых фракций (по номеру) — фракция игрока; null или -1 — никто
             defaultRelation: 'peace', // состояние фракций, пока его не изменили: 'war' (война), 'peace' (нейтралитет) или 'alliance' (союз); дальше его меняет DiplomacyManager
@@ -402,7 +413,8 @@ class FactionManager extends GameModule {
         }
         const inPool = new Set(pool);
 
-        // расстояние в регионах от набора регионов (поиск в ширину)
+        // расстояние в регионах от набора регионов (поиск в ширину). Растёт инкрементально: добавление столицы
+        // продолжает обход с уже известных расстояний, а не считает всё заново.
         const hopsFrom = sources => {
             const hops = new Map(sources.map(s => [s, 0]));
             const queue = sources.slice();
@@ -412,19 +424,34 @@ class FactionManager extends GameModule {
             return hops;
         };
 
+        // Самые населённые регионы — кандидаты в столицы; список не зависит от попытки, поэтому считается один раз.
+        const top = pool.slice().sort((a, b) => score(b) - score(a)).slice(0, Math.max(3, Math.ceil(pool.length * 0.15)));
+
         let best = null;
-        for (let attempt = 0; attempt < this.options.attempts; attempt++) {
+        // Попыток тем меньше, чем больше фракций: одна попытка дорожает линейно по числу фракций, а качество
+        // раскладки уже с ~40 попыток почти не растёт. Для 2–5 фракций множитель равен 1 — поведение прежнее.
+        const attempts = Math.max(40, Math.round(this.options.attempts * 5 / Math.max(5, defs.length)));
+        for (let attempt = 0; attempt < attempts; attempt++) {
             // столицы: первая — среди самых населённых, остальные — примерно на нужном расстоянии от уже выбранных
-            const top = pool.slice().sort((a, b) => score(b) - score(a)).slice(0, Math.max(3, Math.ceil(pool.length * 0.15)));
             const seeds = [top[Math.floor(random() * top.length)]];
+            const hops = hopsFrom(seeds);
             while (seeds.length < defs.length) {
-                const hops = hopsFrom(seeds);
                 const choices = pool.filter(id => !seeds.includes(id) && hops.has(id));
                 if (choices.length === 0) break;
                 const goal = this.options.seedDistance;
                 const fitness = id => -Math.abs(hops.get(id) - goal) * 10 + Math.min(score(id), 400) / 100 + random() * 3;
                 choices.sort((a, b) => fitness(b) - fitness(a));
-                seeds.push(choices[0]);
+                const pick = choices[0];
+                seeds.push(pick);
+                // достроить расстояния от новой столицы (она — источник, расстояние 0), продолжая обход с релаксацией
+                if (hops.get(pick) !== 0) hops.set(pick, 0);
+                const queue = [pick];
+                for (let head = 0; head < queue.length; head++) {
+                    const next = hops.get(queue[head]) + 1;
+                    for (const n of links(queue[head])) {
+                        if (inPool.has(n) && (!hops.has(n) || hops.get(n) > next)) { hops.set(n, next); queue.push(n); }
+                    }
+                }
             }
             if (seeds.length < defs.length) continue;
 

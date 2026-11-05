@@ -79,7 +79,12 @@ Two more Node tools help when a change is *meant* to alter the picture:
 `tools/sprite-demo.html` previews both sprite catalogs: `SPRITE_EXAMPLES` (shape-based) and
 `SPRITE_BITMAPS` (raster). A bitmap config puts `pixels` + `legend` at the top level and
 `SpriteRenderer.normalize` turns them into one `pixels` layer; `$team` in a palette entry
-takes the colour from `options.colors.team`. Armies are drawn from `SPRITE_BITMAPS.army_black`.
+takes the colour from `options.colors.team` (`$accent` — from `options.colors.accent`).
+An army on the map is a heraldic shield, not a crowd with a flag: `ArmyView` picks
+`SPRITE_BITMAPS.shield_<emblem>` by the faction flag's emblem, paints the field with
+`faction.color` and the band/emblem with `faction.secondaryColor`. The old `army_black`
+raster stays in the catalog as a plain bitmap example (`sprite-bitmaps.js` is optional —
+without it `ArmyView` falls back to `SPRITE_EXAMPLES.army`).
 
 `tools/map-test.html` is the in-browser tester: it runs generation + painting, hashes the
 result, and compares against a saved baseline, so optimizations can be tracked without

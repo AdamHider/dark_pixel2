@@ -51,11 +51,8 @@ class Game {
             size: 120,
             seed: 1,
             turnsPerSeason: 3,
-            // стартовые фракции: regions — сколько регионов (число или [мин, макс])
-            startFactions: [
-                { name: 'Красные', color: '#d94a3a', secondaryColor: '#f2d27a', flag: { pattern: 'pale', emblem: 'star' }, regions: [4, 5] },
-                { name: 'Синие', color: '#3b6fd4', secondaryColor: '#e8ecf4', flag: { pattern: 'chevron', emblem: 'tower' }, regions: [4, 5] }
-            ]
+            // стартовые фракции берём из FactionManager, чтобы список был в одном месте (15 фракций)
+            startFactions: FactionManager.DEFAULTS.factions
         };
     }
 

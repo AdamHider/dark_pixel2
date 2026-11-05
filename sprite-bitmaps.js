@@ -83,6 +83,22 @@ const SPRITE_BITMAPS = (() => {
     // color_5 (плащ) и color_7 (щит) — крупные цельные области: их и красим цветом фракции.
     const WARRIOR_TEAM_PALETTE = { ...WARRIOR_PALETTE, color_5: '$team', color_7: '$team' };
 
+
+    /* ---------- Щит (фигурка армии) ----------
+       Армия на карте — не отряд, а геральдический щит: поле цвета фракции, полоса и
+       эмблема — вторым цветом. Так армии читаются с одного взгляда, как фишки в
+       настольной игре. o — контур, t — поле, h/T — блик и тень, a — полоса и эмблема. */
+
+    const SHIELD_LEGEND = { o: 'outline', t: 'field', h: 'lit', T: 'shade', a: 'mark' };
+
+    const SHIELD_PALETTE = {
+        outline: '#241810',
+        field: '$team',
+        lit: { shade: '$team', amount: 0.22 },
+        shade: { shade: '$team', amount: -0.28 },
+        mark: '$accent'
+    };
+
     return {
         // Растр как есть: тёмный воин, цвет не зависит от фракции.
         black_warrior: {
@@ -102,6 +118,150 @@ const SPRITE_BITMAPS = (() => {
             palette: WARRIOR_TEAM_PALETTE,
             pixels: WARRIOR_PIXELS,
             legend: WARRIOR_LEGEND
+        },
+
+        // Щит с эмблемой «star»: поле — цвет фракции, полоса и знак — второй цвет.
+        shield_star: {
+            id: 'shield_star',
+            size: [12, 13],
+            anchor: [6, 12],
+            palette: SHIELD_PALETTE,
+            pixels: [
+            "...ohttho...",
+            "..oohtthoo..",
+            ".oohhaahhoo.",
+            ".ohhaaaaTTo.",
+            ".ohaaaaaaTo.",
+            ".ohtaaaatTo.",
+            ".ohttaattTo.",
+            ".ohhttttTTo.",
+            ".oohhttTToo.",
+            "..oohhTToo..",
+            "...oohToo...",
+            "....oooo....",
+            ".....oo....."
+        ],
+            legend: SHIELD_LEGEND
+        },
+
+        // Щит с эмблемой «circle»: поле — цвет фракции, полоса и знак — второй цвет.
+        shield_circle: {
+            id: 'shield_circle',
+            size: [12, 13],
+            anchor: [6, 12],
+            palette: SHIELD_PALETTE,
+            pixels: [
+            "...ohttho...",
+            "..oohtthoo..",
+            ".oohaaaahoo.",
+            ".ohaaaaaaTo.",
+            ".ohaaaaaaTo.",
+            ".ohaaaaaaTo.",
+            ".ohaaaaaaTo.",
+            ".ohhaaaaTTo.",
+            ".oohhttTToo.",
+            "..oohhTToo..",
+            "...oohToo...",
+            "....oooo....",
+            ".....oo....."
+        ],
+            legend: SHIELD_LEGEND
+        },
+
+        // Щит с эмблемой «diamond»: поле — цвет фракции, полоса и знак — второй цвет.
+        shield_diamond: {
+            id: 'shield_diamond',
+            size: [12, 13],
+            anchor: [6, 12],
+            palette: SHIELD_PALETTE,
+            pixels: [
+            "...ohttho...",
+            "..oohtthoo..",
+            ".oohhaahhoo.",
+            ".ohhaaaaTTo.",
+            ".ohaaaaaaTo.",
+            ".ohaaaaaaTo.",
+            ".ohtaaaatTo.",
+            ".ohhtaatTTo.",
+            ".oohhttTToo.",
+            "..oohhTToo..",
+            "...oohToo...",
+            "....oooo....",
+            ".....oo....."
+        ],
+            legend: SHIELD_LEGEND
+        },
+
+        // Щит с эмблемой «tower»: поле — цвет фракции, полоса и знак — второй цвет.
+        shield_tower: {
+            id: 'shield_tower',
+            size: [12, 13],
+            anchor: [6, 12],
+            palette: SHIELD_PALETTE,
+            pixels: [
+            "...ohttho...",
+            "..oohtthoo..",
+            ".oohaaaahoo.",
+            ".ohhaaaaTTo.",
+            ".ohaaaaaaTo.",
+            ".ohaaaaaaTo.",
+            ".ohaattaaTo.",
+            ".ohaattaaTo.",
+            ".oohhttTToo.",
+            "..oohhTToo..",
+            "...oohToo...",
+            "....oooo....",
+            ".....oo....."
+        ],
+            legend: SHIELD_LEGEND
+        },
+
+        // Щит с эмблемой «cross»: поле — цвет фракции, полоса и знак — второй цвет.
+        shield_cross: {
+            id: 'shield_cross',
+            size: [12, 13],
+            anchor: [6, 12],
+            palette: SHIELD_PALETTE,
+            pixels: [
+            "...ohttho...",
+            "..oohtthoo..",
+            ".ooaattaaoo.",
+            ".ohaattaaTo.",
+            ".ohaaaaaaTo.",
+            ".ohaaaaaaTo.",
+            ".ohaattaaTo.",
+            ".ohaattaaTo.",
+            ".oohhttTToo.",
+            "..oohhTToo..",
+            "...oohToo...",
+            "....oooo....",
+            ".....oo....."
+        ],
+            legend: SHIELD_LEGEND
+        },
+
+        // Щит с эмблемой «none»: поле — цвет фракции, полоса и знак — второй цвет.
+        shield_none: {
+            id: 'shield_none',
+            size: [12, 13],
+            anchor: [6, 12],
+            palette: SHIELD_PALETTE,
+            pixels: [
+            "...ohttho...",
+            "..oohtthoo..",
+            ".oohhtthhoo.",
+            ".ohhttttTTo.",
+            ".ohttttttTo.",
+            ".ohttttttTo.",
+            ".ohttttttTo.",
+            ".ohhttttTTo.",
+            ".oohhttTToo.",
+            "..oohhTToo..",
+            "...oohToo...",
+            "....oooo....",
+            ".....oo....."
+        ],
+            legend: SHIELD_LEGEND
         }
     };
 })();

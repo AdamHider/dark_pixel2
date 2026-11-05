@@ -25,7 +25,12 @@ function __test() {
     const results = [];
     const check = (name, fn) => { fn(); results.push(name); };
 
-    const game = new Game({}, { size: 120 });
+    // Для теста достаточно двух фракций: он про шину и фазы, а не про расстановку.
+    const START_FACTIONS = [
+        { name: 'Красные', color: '#d94a3a', secondaryColor: '#f2d27a', flag: { pattern: 'pale', emblem: 'star' }, regions: [4, 5] },
+        { name: 'Синие', color: '#3b6fd4', secondaryColor: '#e8ecf4', flag: { pattern: 'chevron', emblem: 'tower' }, regions: [4, 5] }
+    ];
+    const game = new Game({}, { size: 120, startFactions: START_FACTIONS });
     const events = [];
     for (const name of ['built', 'turn:end', 'factions:change', 'construction:change', 'armies:change', 'diplomacy:change', 'select', 'hover', 'object:click']) {
         game.on(name, payload => events.push({ name, payload }));
@@ -38,6 +43,7 @@ function __test() {
         __assert(game.generator.landTiles.length > 0, 'карта пуста');
         __assert(seen('built').length === 1, 'built не пришло');
         __assert(game.factions.factions.length === 2, 'не 2 фракции');
+        __assert(Game.DEFAULTS.startFactions.length === 15, 'по умолчанию не 15 фракций');
         __assert(game.armies.armies.length > 0, 'нет стартовых армий');
     });
 
@@ -81,8 +87,8 @@ function __test() {
     });
 
     check('детерминизм: тот же seed — та же карта', () => {
-        const a = new Game({}, { size: 120 }); a.build(5);
-        const b = new Game({}, { size: 120 }); b.build(5);
+        const a = new Game({}, { size: 120, startFactions: START_FACTIONS }); a.build(5);
+        const b = new Game({}, { size: 120, startFactions: START_FACTIONS }); b.build(5);
         __assert(a.generator.landTiles.length === b.generator.landTiles.length, 'разное число клеток суши');
         __assert(a.generator.landTiles.every((t, i) => t === b.generator.landTiles[i]), 'разные клетки суши');
     });

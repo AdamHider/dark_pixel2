@@ -76,13 +76,17 @@ function __test() {
         __assert(renderer.objects.every(o => String(o.id).startsWith('army-')), 'id объекта не army-*');
     });
 
-    check('спрайты: армия рисуется растром (sprite-bitmaps), цвет — цвет фракции', () => {
-        const config = renderer.objects[0].config;
-        __assert(config.id === 'army_black', 'армия не использует растровый спрайт: ' + config.id);
-        __assert(Array.isArray(config.pixels) && config.legend, 'у растра нет pixels/legend');
-        __assert(config.palette.color_5 === '$team', 'плащ не привязан к цвету фракции');
-        const team = renderer.objects[0].options.colors.team;
-        __assert(/^#[0-9a-f]{6}$/i.test(team), 'цвет фракции не передан: ' + team);
+    check('спрайты: армия — щит по эмблеме фракции, цвета — её цвет и второй цвет', () => {
+        const object = renderer.objects[0];
+        const config = object.config;
+        __assert(/^shield_/.test(config.id), 'армия не использует щит: ' + config.id);
+        __assert(Array.isArray(config.pixels) && config.legend, 'у щита нет pixels/legend');
+        __assert(config.palette.field === '$team' && config.palette.mark === '$accent', 'поля щита не привязаны к цветам фракции');
+        const army = armies.get(Number(String(object.id).slice(5)));
+        const faction = generator.factions[army.faction];
+        __assert(config.id === 'shield_' + faction.flag.emblem, 'эмблема щита не совпала с флагом фракции');
+        __assert(object.options.colors.team === faction.color, 'поле щита не в цвет фракции');
+        __assert(object.options.colors.accent === faction.secondaryColor, 'знак щита не во второй цвет фракции');
     });
 
     check('фокус: клик по своей армии берёт её в фокус', () => {
@@ -110,6 +114,16 @@ function __test() {
         view.handleClick(__tileOf(target, size));               // приказ
         __assert(armies.get(army.id).tile === target, 'армия не переместилась');
         __assert(view.selectedId === null, 'фокус не снят после приказа');
+    });
+
+    check('захват: армия берёт ровно свою клетку, а не девять вокруг', () => {
+        const army = armies.armiesOf(player.id)[0];
+        const own = armies.capturable(army);
+        __assert(own.length <= 1, 'capturable вернул больше одной клетки: ' + own.length);
+        if (own.length) __assert(own[0] === army.tile, 'захватывается не клетка армии');
+        // клетка в зоне перехвата (соседняя) не должна попадать в список, если это не сама клетка армии
+        const neighbors = armies.zoneTiles(army.tile, 1).filter(t => t !== army.tile);
+        __assert(neighbors.every(t => !own.includes(t)), 'в захват попала соседняя клетка');
     });
 
     check('наведение: зона перехвата подсвечивается', () => {
