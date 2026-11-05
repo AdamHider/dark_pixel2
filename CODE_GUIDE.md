@@ -577,14 +577,15 @@ createNoiseLayers → allocateLayers
    `seasons.js` + `map-generator.js` как classic-скрипты) и сравнить массивы до/после правки.
 4. **Отрисовка**: `MapPainter.paint(...)` на заглушечном canvas (`createImageData` /
    `putImageData`) для всех видов × сезонов × стилей и сравнить хэш пикселей.
-5. **Тестер в браузере**: `map-test.html` прогоняет генерацию и отрисовку, считает хэши и
-   сверяет с эталоном (см. `AGENTS.md`).
+5. **Эталон (главная проверка)**: `node tools/baseline.js check` — 79 случаев (генерация + все
+   виды × сезоны × стили × границы + спрайты), сверка с `tools/baseline.json` (см. `AGENTS.md`).
+6. **Тестер в браузере**: `tools/map-test.html` делает то же самое с таблицей в браузере.
 
 ## 12. Карта секций
 
 Все файлы размечены баннерами `SECTION: ИМЯ` внутри `/* ===== */`. Ниже — порядок секций
 (он же порядок кода: секции идут по конвейеру, не по алфавиту). Имена в `map-painter.js` и
-`map-generator.js` совпадают с `MapGeneratorReference.js` там, где смысл тот же.
+`map-generator.js` совпадают с `docs/MapGeneratorReference.js` там, где смысл тот же.
 
 ### map-generator.js — данные карты
 

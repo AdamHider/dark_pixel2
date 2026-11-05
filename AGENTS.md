@@ -21,10 +21,17 @@ duplication/refactor backlog.
 ## Verification (do this after touching generator or painter)
 
 Generation and painting are fully deterministic for a given seed, so any refactor can be
-verified byte-for-byte. There is no test runner; use ad-hoc Node harnesses, or the
-browser tester `map-test.html`.
+verified byte-for-byte. The canonical check is the Node harness `tools/baseline.js`
+(79 cases: 3 seeds of generation + every view × season × mood × borders render + sprites):
 
-1. Syntax: `node --check map-generator.js && node --check map-painter.js && node --check faction-manager.js`
+    node tools/baseline.js check    # after every change; must print "OK: 79 случаев"
+
+`tools/baseline.json` is the frozen reference — do not regenerate it during a refactor, or
+you lose the safety net. `save` is only for deliberately accepting a new visual baseline.
+
+Additional ad-hoc checks, if needed:
+
+1. Syntax: `node --check map-generator.js && node --check map-painter.js && node --check army-manager.js`
 2. Generation: load `seasons.js` + `map-generator.js` with `vm.runInThisContext(...)` (they
    are classic scripts, not modules), then
    `new MapGenerator({ size: 120 }).generate(42)` and hash/serialize the result arrays.
@@ -34,7 +41,7 @@ browser tester `map-test.html`.
 
 `node --check` refuses files without a `.js` extension, so copy to `/tmp/*.js` first.
 
-`map-test.html` is the in-browser tester: it runs generation + painting, hashes the
+`tools/map-test.html` is the in-browser tester: it runs generation + painting, hashes the
 result, and compares against a saved baseline, so optimizations can be tracked without
 changing the visible result. Its `MAP_TEST` module is reusable from Node (extract it and
 load it after the map scripts).
@@ -42,7 +49,7 @@ load it after the map scripts).
 ## Conventions
 
 - `SECTION: ...` banners (inside `/* ===== */` blocks) group code, both file-level and
-  per class. Names mirror `MapGeneratorReference.js` where they overlap (`MAP_COLORS`,
+  per class. Names mirror `docs/MapGeneratorReference.js` where they overlap (`MAP_COLORS`,
   `MAP_CONSTANTS`, `MAP_HASH_NOISE`, `MAP_SHADING`, `PIXEL_BUFFER`, ...). Full map is in
   `CODE_GUIDE.md` §12. Class methods are ordered in pipeline order, not alphabetically.
 - Colors are packed into single `Int32` values (`packRgb`); use `mixPacked`/`shadePacked`.
