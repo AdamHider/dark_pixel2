@@ -663,6 +663,7 @@ createNoiseLayers → allocateLayers
 | `turn-manager.js` | `TURN_MANAGER`, `CALENDAR`, `PHASES`, `TURN`, `SAVE` |
 | `diplomacy-manager.js` | `DIPLOMACY_MANAGER`, `STATE`, `ACTIONS`, `EVALUATION`, `STEP`, `SAVE` |
 | `army-view.js` | `ARMY_VIEW` (класс `ArmyView`: фокус, приказы, анимация, подсветка, спрайты, панель) |
+| `game.js` | `GAME` (класс `Game`: карта, рендерер, менеджеры, шина событий; класс `GameEmitter`) |
 | `main.js` | `MAIN`, `MANAGERS`, `NAMES`, `TURNS`, `ACTIONS`, `FACTIONS`, `PLAYER`, `ARMIES`, `CONSTRUCTION`, `SELECTION`, `BUTTONS`, `DEMO_OBJECTS` |
 | `sprite-renderer.js` | `SPRITE_RENDERER`, `CONFIG`, `COLORS`, `LAYERS`, `OUTPUT` |
 | `sprite-examples.js` | `SPRITE_EXAMPLES` |

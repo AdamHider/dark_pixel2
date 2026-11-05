@@ -10,22 +10,13 @@
      EconomyManager — рост лесов и полей, рост поселений, запасы фракций (математика подключается параметром calculate).
      MapRenderer    — показывает карту и сам реагирует на изменения: меняет сезон, перерисовывает карту, рисует границы фракций.
    ============================================================ */
-   const generator = new MapGenerator({
-    size: 120,
-    // shapeVariety: 1,       // 0..1: изрезанность континента (заливы, полуострова)
-    // islandDensity: 0.8,    // 0..1: больше островов
-    // inlandSeaStrength: 0.5,// внутренние моря
-    // aridity: 0.1,          // меньше степей и пустынь
-    // waterShare: 0.5,       // больше суши
-    // mountainShare: 0.2,    // больше гор
-    // riverCount: 30,
-    // regionMinSize: 5,
-    // regionMaxSize: 8,
-});
-
 const canvas = document.getElementById('map');
-const renderer = new MapRenderer(canvas, generator);
 const info = document.getElementById('info');      // строки состояния на странице может не быть: сообщения игроку идут через notify()
+
+// Вся игра (карта, рендерер, менеджеры, шина событий) — в game.js; параметры генерации — в Game.DEFAULTS.
+const game = new Game(canvas, { size: 120 });
+const generator = game.generator;
+const renderer = game.renderer;
 
 /* ============================================================
    SECTION: MANAGERS
@@ -33,37 +24,31 @@ const info = document.getElementById('info');      // строки состоя�
    ============================================================ */
 
 const TURNS_PER_SEASON = 3;                         // сколько ходов длится сезон
-const START_FACTIONS = [                            // стартовые фракции: regions — сколько регионов (число или [мин, макс])
-    { name: 'Красные', color: '#d94a3a', secondaryColor: '#f2d27a', flag: { pattern: 'pale', emblem: 'star' }, regions: [4, 5] },
-    { name: 'Синие', color: '#3b6fd4', secondaryColor: '#e8ecf4', flag: { pattern: 'chevron', emblem: 'tower' }, regions: [4, 5] }
-];   // secondaryColor и flag можно не указывать: подберутся сами (см. FactionManager.makeFaction)
 
-let factions = null, turns = null, economy = null, construction = null, armies = null, diplomacy = null;  // создаются после первой генерации (см. connectManagers)
+// Менеджеры игры: заполняются при первой сборке карты (buildMap) из game.
+let factions = null, turns = null, economy = null, construction = null, armies = null, diplomacy = null;
 let armyView = null;   // взаимодействие с армиями: фокус, приказы, анимация, подсветка, спрайты, панель (army-view.js)
 
+// Каждый модуль объявляет свои события в шину игры (game.js); здесь на них подписывается интерфейс.
+// Вызывается один раз — после первой сборки карты; менеджеры переживают новые карты.
 function connectManagers() {
-    factions = new FactionManager(generator, { factions: START_FACTIONS });
-    // Математика экономики — faction-economy.js (из симулятора dpresources.html); контракт функции — в начале economy-manager.js.
-    economy = new EconomyManager(generator, { calculate: calculateFactionEconomy, ...FactionEconomy.managerOptions(TURNS_PER_SEASON) });
-    construction = new ConstructionManager(generator, { economy, factions });     // строительство и снос: мосты, башни, армии, леса и поля (construction-manager.js)
-    construction.onChange(onConstructionChange);
-    armies = new ArmyManager(generator, { economy, factions, construction });       // армии: найм, движение, бой, захват (army-manager.js)
-    diplomacy = new DiplomacyManager(generator, {                                   // дипломатия: отношения и действия (diplomacy-manager.js)
-        factions, economy, strength: id => (armies ? armies.armiesOf(id).reduce((sum, a) => sum + a.strength, 0) : 0)
-    });
-    diplomacy.onChange(() => refreshFactionPanel());
-    turns = new TurnManager(generator, { turnsPerSeason: TURNS_PER_SEASON });   // порядок сезонов — SEASON_ORDER из seasons.js
-    turns.addPhase('diplomacy', context => diplomacy.step(context));            // отношения дрейфуют до армий и экономики
-    turns.addPhase('armies', context => armies.step(context));                   // сначала армии (движение, лечение, захват), потом экономика по новым владениям
-    turns.addPhase('economy', context => economy.step(context));                 // экономика считается раз в ход
+    ({ factions, economy, construction, armies, diplomacy, turns } = game);
 
-    turns.onTurn(onTurnDone);
-    factions.onChange(() => {
+    game.on('turn:end', () => onTurnDone());
+    game.on('factions:change', () => {
         refreshFactionPanel();
         refreshPlayerUI();
         if (armyView) armyView.syncHighlights();
         refreshSelection();
     });
+    game.on('construction:change', () => onConstructionChange());
+    game.on('diplomacy:change', () => refreshFactionPanel());
+    game.on('select', ({ tile, region }) => {
+        armyView.handleClick(tile);            // фокус и приказы армий (до показа клетки: после хода карточка уже обновлена)
+        showSelection(tile, region);
+    });
+    game.on('hover', tile => armyView.handleHover(tile));
+    game.on('object:click', object => armyView.handleObjectClick(object));
 }
 
 /* ============================================================
@@ -234,34 +219,17 @@ const seedInput = document.getElementById('seed');
 
 function buildMap() {
     stopAutoTurns();
-    generator.generate(Number(seedInput.value) || 1);
+    game.build(Number(seedInput.value) || 1);   // карта, менеджеры, стартовое наполнение и событие 'built' — в game.js
 
-    // Менеджеры: в первый раз создаём, потом только привязываем к новой карте и сбрасываем.
-    if (!factions) {
-        connectManagers();
-    } else {
-        factions.attach(generator);
-        economy.attach(generator);
-        construction.attach(generator);
-        armies.attach(generator);
-        diplomacy.attach(generator);
-        armyView.attach(generator);
-        turns.reset();
-    }
-
+    if (!factions) connectManagers();            // первый раз: алиасы менеджеров и подписки интерфейса на шину
     if (!armyView) {
         armyView = new ArmyView();
         armyView.setup({ armies, factions, generator, renderer, construction, controls: armyControls, info, ui: uiRenderer, notify });
         armyView.onChange = () => { refreshFactionPanel(); refreshPlayerUI(); refreshSelection(); };
         armyView.onSelection = () => refreshSelection();
-        renderer.onHover = tile => armyView.handleHover(tile);
-        renderer.onObjectClick = object => armyView.handleObjectClick(object);
+    } else {
+        armyView.attach(generator);              // новая карта: сбросить фокус и анимацию
     }
-
-    renderer.refresh();     // карта рисуется один раз и уже в сезоне, с которого начинается игра
-    factions.generate();    // стартовые фракции: слой фракций рисуется поверх готовой карты (без перерисовки самой карты)
-    construction.seed();    // стартовые башни (перерисует карту ещё раз: башни — часть сцены)
-    armies.seed();          // стартовые армии в поселениях рядом со столицей
 
     //showStats();
     refreshTurnStatus();
@@ -562,10 +530,7 @@ function showEdictControls(region) {
         showEdictControls(region);
     }
    
-    renderer.onSelect = (tile, region) => {
-        armyView.handleClick(tile);            // фокус и приказы армий (до показа клетки: после хода карточка уже обновлена)
-        showSelection(tile, region);
-    };
+    // Клик по карте приходит через шину игры (game.on('select')) — см. connectManagers.
     
     function refreshSelection() {
         const selected = renderer.selection;

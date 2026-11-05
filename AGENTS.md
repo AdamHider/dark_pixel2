@@ -8,17 +8,23 @@ dependencies. Scripts are loaded in `index.html` in dependency order:
 `sprite-examples.js` → `map-renderer.js` → `core-module.js` → `faction-manager.js` →
 `turn-manager.js` → `economy-manager.js` → `faction-economy.js` →
 `construction-manager.js` → `army-manager.js` → `diplomacy-manager.js` → `army-view.js` →
-`ui-renderer.js` → `main.js`.
+`game.js` → `ui-renderer.js` → `main.js`.
 
 `core-module.js` defines `GameModule`, the base class every `*-manager.js` extends (it
-owns `attach`, `onChange`, `emit`). It must load before any manager. `faction-manager.js`
+owns `attach`, `onChange`, `emit`). It must load before any manager. `game.js` defines
+`Game`, the facade that creates the map, renderer and managers and exposes an event bus
+(`game.on('turn:end' | 'factions:change' | 'construction:change' | 'diplomacy:change' |
+'select' | 'hover' | 'object:click', ...)`); `main.js` is only DOM wiring. `faction-manager.js`
 reads `Resource`, `ResourceInfo`, `Terrain` from `map-generator.js`, so it must load after
 it.
 
 Architecture: `MapGenerator` fills flat typed arrays; `MapPainter` renders them once into
 an offscreen 1:1 canvas; `MapRenderer` is just a camera over that canvas. `FactionManager`
 is a separate module that owns faction state and hands it to the map via
-`map.applyFactionState` (the map only stores and shows it).
+`map.applyFactionState` (the map only stores and shows it). `Game` (`game.js`) is the
+facade: it owns the map, renderer and all managers, and exposes a global event bus so
+modules react to `turn:end`, `factions:change`, `select`, ... instead of reaching into each
+other.
 
 See `CODE_GUIDE.md` for the full function-by-function guide and `OPTIMIZATION.md` for the
 duplication/refactor backlog.
@@ -32,6 +38,7 @@ verified byte-for-byte. The canonical check is the Node harness `tools/baseline.
     node tools/baseline.js check        # map generation/painting/sprites: "OK: 79 случаев"
     node tools/sim-baseline.js check    # managers/turns/armies: "OK: 7 шагов"
     node tools/army-view-test.js        # ArmyView focus/orders/highlights: "OK: 8 проверок"
+    node tools/game-test.js             # Game facade + event bus: "OK: 5 проверок"
 
 `tools/baseline.json` and `tools/sim-baseline.json` are the frozen references — do not
 regenerate them during a refactor, or you lose the safety net. `save` is only for
