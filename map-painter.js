@@ -65,12 +65,12 @@ function mixPacked(a, b, t) {
     return 0xFF000000 | (bl << 16) | (g << 8) | r;
 }
 
-// Крапинка: чуть светлее или чуть темнее (на ~13%), целочисленно.
+// Крапинка: чуть светлее или чуть темнее (на ~8%), целочисленно.
 function speckColor(color, lighter) {
     const target = lighter ? 255 : 0;
-    const r = (color & 255) + (((target - (color & 255)) * 33) >> 8);
-    const g = ((color >>> 8) & 255) + (((target - ((color >>> 8) & 255)) * 33) >> 8);
-    const b = ((color >>> 16) & 255) + (((target - ((color >>> 16) & 255)) * 33) >> 8);
+    const r = (color & 255) + (((target - (color & 255)) * 20) >> 8);
+    const g = ((color >>> 8) & 255) + (((target - ((color >>> 8) & 255)) * 20) >> 8);
+    const b = ((color >>> 16) & 255) + (((target - ((color >>> 16) & 255)) * 20) >> 8);
     return 0xFF000000 | (b << 16) | (g << 8) | r;
 }
 
@@ -122,7 +122,7 @@ function waterShadeIndex(depth) {
 }
 
 // Матрица упорядоченного дизеринга 4×4: даёт «пиксельный» градиент вместо плавного размытия.
-const STEP_AMOUNTS = Int32Array.from([-30, -15, 0, 15, 28]); // ступени светотени холмов, в долях от 256
+const STEP_AMOUNTS = Int32Array.from([-22, -11, 0, 11, 20]); // ступени светотени холмов, в долях от 256
 const BAYER = Float32Array.from([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5], v => (v + 0.5) / 16);
 
 /* ============================================================
@@ -1427,8 +1427,8 @@ MapPaint.Chunks = class Chunks {
 
     MapPaint.Hills = {
         defaults: {
-            hillStrength: 0.6,   // 0..1: заметность холмов и впадин на равнинах (0 — выключить)
-            ravineDensity: 0.2  // 0..1: сколько оврагов в сухих местах (0 — нет)
+            hillStrength: 0.45,   // 0..1: заметность холмов и впадин на равнинах (0 — выключить)
+            ravineDensity: 0.08 // 0..1: сколько оврагов в сухих местах (0 — нет)
         },
 
         enabled: p => p.view === 'terrain' && p.layers.hills && (p.options.hillStrength > 0 || p.options.ravineDensity > 0),
@@ -2601,7 +2601,7 @@ MapPaint.Chunks = class Chunks {
         paint(p) {
             const map = p.map;
             const { T } = p.dim;
-            const speckCount = Math.round(T * T / 16);
+            const speckCount = Math.round(T * T / 32);
             const specks = this.speckLayout(p, speckCount);
 
             p.forEachRegionTile((x, y) => {
@@ -2663,6 +2663,15 @@ MapPaint.Chunks = class Chunks {
             }
         },
 
+        // Крупный плавный шум по клеткам (0..1, ячейка 5 клеток): раскладывает траву пятнами.
+        meadow(p, x, y) {
+            const cell = 5, gx = Math.floor(x / cell), gy = Math.floor(y / cell), k = 500 + p.seedSalt;
+            const u = smoothstep(x / cell - gx), v = smoothstep(y / cell - gy);
+            const top = hashUnit(gx, gy, k) * (1 - u) + hashUnit(gx + 1, gy, k) * u;
+            const bottom = hashUnit(gx, gy + 1, k) * (1 - u) + hashUnit(gx + 1, gy + 1, k) * u;
+            return top + (bottom - top) * v;
+        },
+
         // Трава: пучки стебельков. Чем плодороднее и влажнее место, тем их больше; цвет — оттенки земли под ними.
         paintTufts(p, x, y, i) {
             const map = p.map;
@@ -2678,7 +2687,9 @@ MapPaint.Chunks = class Chunks {
                 case Biome.TUNDRA: count = 0.4 + 1.2 * moisture; break;
                 default: return;
             }
-            count = Math.round(count * p.options.grassDensity * (map.resource[i] === Resource.WOOD ? 0.6 : 1));
+            // Трава растёт пятнами: в «лугах» гуще, между ними почти пусто — вместо равномерной россыпи по всей карте.
+            const patch = 0.1 + 2 * smoothstep(this.meadow(p, x, y));
+            count = Math.round(count * 0.55 * patch * p.options.grassDensity * (map.resource[i] === Resource.WOOD ? 0.6 : 1));
 
             const { T, W } = p.dim;
             for (let n = 0; n < count; n++) {
@@ -2686,8 +2697,8 @@ MapPaint.Chunks = class Chunks {
                 const bx = x * T + (h % T);
                 const by = y * T + ((h >>> 8) % T);
                 const ground = p.pixels[Math.min(by, W - 1) * W + Math.min(bx, W - 1)];
-                const dark = shadeFast(ground, -56);
-                const light = shadeFast(ground, 46);
+                const dark = shadeFast(ground, -36);
+                const light = shadeFast(ground, 30);
                 const blades = 2 + ((h >>> 16) % 2);
                 const lean = ((h >>> 18) % 3) - 1;
 
@@ -3556,7 +3567,7 @@ MapPaint.Chunks = class Chunks {
             const slots = [[0.26, 0.52], [0.74, 0.46], [0.5, 0.96]];
             const start = tileHash(x, y, 30) % slots.length;
             // Сколько деревьев растёт в клетке: полный лес — 2–3, молодой (экономика ещё не вырастила) — меньше, вплоть до одного.
-            const full = 2 + (tileHash(x, y, 31) % 3 === 0 ? 1 : 0);
+            const full = 2;
             const stage = map.growth ? growthStage(map.growth[i]) : GROWTH_STAGES;
             const count = stage === 0 ? 0 : Math.max(1, Math.round(full * stage / GROWTH_STAGES));
 
@@ -3675,13 +3686,13 @@ MapPaint.Chunks = class Chunks {
                 return;
             }
 
-            const width = p.px(7) + (pick % 2);
+            const width = p.px(6) + (pick % 2);
             const height = width;
             const trunkHeight = p.px(2) + 1;
             const trunkWidth = width >= 7 ? 2 : 1;
             const color = hexToPacked(pal.broadleaf[pick % pal.broadleaf.length]);
-            const light = shadePacked(color, 0.22);
-            const dark = shadePacked(color, -0.28);
+            const light = shadePacked(color, 0.16);
+            const dark = shadePacked(color, -0.22);
             const top = base - trunkHeight - height + 2;
 
             this.drawShadow(p, cx, base, width);
@@ -3695,7 +3706,6 @@ MapPaint.Chunks = class Chunks {
                 for (let x = x0; x <= x1; x++) {
                     const lean = (x - cx) + (row - height / 2);  // < 0 — верх-лево (освещено), > 0 — низ-право (тень)
                     let shade = lean < -width * 0.2 ? light : lean > width * 0.28 ? dark : color;
-                    if (hashUnit(x, top + row, 77) < 0.12) shade = shade === dark ? color : dark; // листва «шуршит»
                     p.put(x, top + row, shade);
                 }
             }
@@ -3732,9 +3742,9 @@ MapPaint.Chunks = class Chunks {
         drawConifer(p, cx, base, pick, withSnow) {
             const pal = p.pal;
             const color = hexToPacked(pal.conifer[pick % pal.conifer.length]);
-            const light = shadePacked(color, 0.2);
-            const dark = shadePacked(color, -0.3);
-            const height = p.px(10) + (pick % 2);
+            const light = shadePacked(color, 0.15);
+            const dark = shadePacked(color, -0.24);
+            const height = p.px(9) + (pick % 2);
             const maxHalf = Math.max(2, Math.round(p.px(6) / 2));
             const trunkHeight = p.px(2);
             const top = base - trunkHeight - height + 1;

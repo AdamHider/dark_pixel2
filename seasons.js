@@ -197,7 +197,7 @@
                blossom: null,                       // цветущие деревья — не для этого мира
                wheatStalk: toneHex(p.wheatStalk, DARK_TONES.crops),
                wheatTop: toneHex(p.wheatTop, DARK_TONES.crops),
-               groundDetail: p.groundDetail ? tone(p.groundDetail, DARK_TONES.litter) : null,
+               groundDetail: null,                  // цветочки и листья на лугу в тёмном стиле — лишний шум
                ...DARK_EXTRA[name]
            }
        };
