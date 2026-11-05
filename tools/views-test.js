@@ -74,6 +74,16 @@ globalThis.document = {
 const HARNESS = `
 function __assert(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
 
+// Мини-шина событий: те же on/off/emit, что у Game (game.js).
+function __bus() {
+    const listeners = new Map();
+    return {
+        on(name, fn) { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(fn); return () => this.off(name, fn); },
+        off(name, fn) { const set = listeners.get(name); if (set) set.delete(fn); },
+        emit(name, payload) { const set = listeners.get(name); if (set) for (const fn of [...set]) fn(payload); }
+    };
+}
+
 function __test() {
     const results = [];
     const check = (name, fn) => { fn(); results.push(name); };
@@ -98,11 +108,12 @@ function __test() {
     construction.seed();
     armies.seed();
 
-    // Заглушка игры: view-модули берут из неё менеджеры и рендерер.
+    // Заглушка игры: view-модули берут из неё менеджеры, рендерер и шину событий.
     const notices = [];
-    const game = { generator, factions, economy, construction, armies, diplomacy, turns,
+    const bus = __bus();
+    const game = Object.assign(bus, { generator, factions, economy, construction, armies, diplomacy, turns,
         options: { turnsPerSeason: TURNS_PER_SEASON }, renderer: { options: {}, selection: null },
-        turn(count = 1) { return turns.advance(count); } };
+        turn(count = 1) { return turns.advance(count); } });
     const ui = new UIRenderer();
 
     check('faction-view: панель фракций и дипломатии заполняется', () => {
@@ -187,6 +198,36 @@ function __test() {
         const view = new SelectionView().setup({ game, ui, armyView, notify: t => notices.push(t) });
         view.show(null, null);
         __assert(document.getElementById('selection').hidden, 'панель не скрыта');
+    });
+
+    check('шина: view-модули сами реагируют на события', () => {
+        // Своя шина: ранние проверки создают views на общей и не отписываются, иначе teardown нечем проверить.
+        const bus = __bus();
+        const isolated = Object.assign(bus, { generator, factions, economy, construction, armies, diplomacy, turns,
+            options: { turnsPerSeason: TURNS_PER_SEASON }, renderer: { options: {}, selection: null },
+            turn(count = 1) { return turns.advance(count); } });
+
+        const factionView = new FactionView().setup({ game: isolated, ui, notify: () => {}, onCenterCapital: () => {} });
+        const playerView = new PlayerView().setup({ game: isolated, ui, onCapital: () => {} });
+        const turnView = new TurnView().setup({ game: isolated });
+        const armyView = { showControls: () => {}, syncObjects: () => {}, syncHighlights: () => {} };
+        const selectionView = new SelectionView().setup({ game: isolated, ui, armyView, notify: () => {} });
+
+        document.getElementById('factions').replaceChildren();
+        document.getElementById('turn-status').textContent = '';
+        isolated.emit('factions:change', 'test');
+        __assert(document.getElementById('factions').childCount === generator.factions.length, 'factions:change не перерисовал панель');
+        isolated.emit('turn:end', turns.calendar());
+        __assert(document.getElementById('turn-status').text.includes('Ход'), 'turn:end не обновил строку хода');
+        __assert(document.getElementById('resources-bar').childCount > 0, 'turn:end не обновил панель игрока');
+
+        factionView.teardown(); playerView.teardown(); turnView.teardown(); selectionView.teardown();
+        document.getElementById('factions').replaceChildren();
+        document.getElementById('turn-status').textContent = '';
+        isolated.emit('factions:change', 'test');
+        isolated.emit('turn:end', turns.calendar());
+        __assert(document.getElementById('factions').childCount === 0, 'после teardown панель всё ещё перерисовывается');
+        __assert(document.getElementById('turn-status').textContent === '', 'после teardown строка хода всё ещё обновляется');
     });
 
     return results;

@@ -21,7 +21,7 @@ function temperatureName(t) {
     return 'жарко';
 }
 
-class SelectionView {
+class SelectionView extends ViewModule {
     setup({ game, ui, armyView, notify }) {
         this.game = game;
         this.ui = ui;
@@ -31,6 +31,11 @@ class SelectionView {
         this.ownerControls = document.getElementById('owner-controls');
         this.buildControls = document.getElementById('build-controls');
         this.edictControls = document.getElementById('edict-controls');
+
+        this.listenMany(game, HUD_EVENTS, () => this.refresh());
+        this.listen(game, 'select', ({ tile, region }) => this.show(tile, region));
+        this.listen(game, 'armies:focus', () => this.refresh());   // фокус армии меняет её карточку в окне
+        this.listen(game, 'built', () => this.show(null, null));   // новая карта: выделение сброшено
         return this;
     }
 

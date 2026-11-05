@@ -14,7 +14,7 @@ const LAND_RESOURCES = [
     [Resource.WHEAT, '🌾', 'Пашни'], [Resource.WOOD, '🌲', 'Лес'], [Resource.IRON, '⛏️', 'Железо'], [Resource.ETHER, '🔮', 'Эфир'], [Resource.GOLD, '🪙', 'Золото']
 ];
 
-class PlayerView {
+class PlayerView extends ViewModule {
     setup({ game, ui, onCapital }) {
         this.game = game;
         this.ui = ui;
@@ -24,6 +24,12 @@ class PlayerView {
         this.panel = document.getElementById('my-faction');
         this.economyPanel = document.getElementById('economy');
         this.lastForecast = null;   // { turn, values }: что мы обещали на ход turn (запасы и уровень еды) — для самопроверки в checkForecast
+
+        this.listenMany(game, ['factions:change', 'construction:change', 'armies:change'], () => this.render());
+        this.listen(game, 'built', () => this.render());
+        // Порядок важен: checkForecast сверяет прогноз с прошедшим ходом ДО того, как render перезапишет lastForecast.
+        // Только на turn:end: траты внутри хода (эдикт, постройка) законно расходятся с прогнозом и не должны давать предупреждений.
+        this.listen(game, 'turn:end', () => { this.checkForecast(); this.render(); });
         return this;
     }
 

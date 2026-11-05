@@ -22,6 +22,16 @@ const HARNESS = `
 function __assert(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
 function __tileOf(index, size) { return { x: index % size, y: Math.floor(index / size) }; }
 
+// Мини-шина событий: те же on/off/emit, что у Game (game.js), но без карты и рендерера.
+function __bus() {
+    const listeners = new Map();
+    return {
+        on(name, fn) { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(fn); return () => this.off(name, fn); },
+        off(name, fn) { const set = listeners.get(name); if (set) set.delete(fn); },
+        emit(name, payload) { const set = listeners.get(name); if (set) for (const fn of [...set]) fn(payload); }
+    };
+}
+
 function __test() {
     const results = [];
     const check = (name, fn) => { fn(); results.push(name); };
@@ -52,7 +62,7 @@ function __test() {
     const ui = { renderArmyControls(controls, model, handlers) { lastArmyControls = model; lastHandlers = handlers; } };
     const notices = [];
     const view = new ArmyView().setup({
-        game: { armies, factions }, generator, renderer, construction,
+        game: Object.assign(__bus(), { armies, factions }), generator, renderer, construction,
         controls: {}, info: {}, ui, notify: text => notices.push(text)
     });
 
@@ -124,6 +134,31 @@ function __test() {
         view.animation = { fake: true };
         view.attach(generator);
         __assert(view.selectedId === null && view.animation === null && view.signature === '', 'состояние не сброшено');
+    });
+
+    check('шина: select берёт армию в фокус, hover подсвечивает зону', () => {
+        const army = armies.armiesOf(player.id)[0];
+        view.game.emit('select', { tile: __tileOf(army.tile, size), region: null });
+        __assert(view.selectedId === army.id, 'select не взял армию в фокус');
+        view.game.emit('hover', __tileOf(army.tile, size));
+        __assert(generator.highlights.some(v => (v & HIGHLIGHT.ZONE)), 'hover не подсветил зону');
+        view.game.emit('hover', null);
+    });
+
+    check('шина: armies:change и built обновляют спрайты', () => {
+        renderer.objects = null;
+        view.game.emit('armies:change', { action: 'move' });
+        __assert(renderer.objects && renderer.objects.length === armies.armies.length, 'armies:change не обновил спрайты');
+        view.focus(armies.armiesOf(player.id)[0].id);
+        view.game.emit('built', view.game);
+        __assert(view.selectedId === null, 'built не сбросил фокус');
+    });
+
+    check('шина: teardown отписывает модуль', () => {
+        view.teardown();
+        view.focus(null);
+        view.game.emit('select', { tile: __tileOf(armies.armiesOf(player.id)[0].tile, size), region: null });
+        __assert(view.selectedId === null, 'после teardown событие всё ещё обрабатывается');
     });
 
     return results;

@@ -12,10 +12,12 @@ dependencies. Scripts are loaded in `index.html` in dependency order:
 `selection-view.js` → `main.js`.
 
 `core-module.js` defines `GameModule`, the base class every `*-manager.js` extends (it
-owns `attach`, `onChange`, `emit`). It must load before any manager. `game.js` defines
+owns `attach`, `onChange`, `emit`), and `ViewModule`, the base class every `*-view.js`
+extends (it owns `listen`/`listenMany`/`teardown` for bus subscriptions). It must load
+before any manager or view. `game.js` defines
 `Game`, the facade that creates the map, renderer and managers and exposes an event bus
-(`game.on('turn:end' | 'factions:change' | 'construction:change' | 'armies:change' |
-'diplomacy:change' | 'select' | 'hover' | 'object:click', ...)`); `main.js` is only DOM
+(`game.on('built' | 'turn:end' | 'factions:change' | 'construction:change' | 'armies:change' |
+'diplomacy:change' | 'select' | 'hover' | 'object:click' | 'armies:focus', ...)`); `main.js` is only DOM
 wiring. `faction-manager.js` reads `Resource`, `ResourceInfo`, `Terrain` from
 `map-generator.js`, so it must load after it.
 
@@ -23,8 +25,10 @@ wiring. `faction-manager.js` reads `Resource`, `ResourceInfo`, `Terrain` from
 `FactionView` (factions + diplomacy panel), `PlayerView` (resource bar, "Моя фракция",
 "Экономика" and the forecast), `TurnView` (turn status, seasons, autoplay),
 `SelectionView` (selection cards, region handover, build/edict orders). They read manager
-state and render DOM; they do not own game rules. `UIRenderer` (`ui-renderer.js`) is the
-shared DOM builder and must load before the views.
+state and render DOM; they do not own game rules. Each view subscribes to the bus itself in
+`setup()` (`ViewModule.listen`) and unsubscribes in `teardown()`, so `main.js` keeps no
+subscription list. `UIRenderer` (`ui-renderer.js`) is the shared DOM builder and must load
+before the views.
 
 Architecture: `MapGenerator` fills flat typed arrays; `MapPainter` renders them once into
 an offscreen 1:1 canvas; `MapRenderer` is just a camera over that canvas. `FactionManager`

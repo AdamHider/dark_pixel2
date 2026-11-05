@@ -15,7 +15,7 @@ const FACTION_VIEW = {
     INCOME_NAMES: { production: 'производство', gold: 'золото', population: 'население' }   // еда — не запас и не доход, а уровень (см. FactionEconomy.foodTier)
 };
 
-class FactionView {
+class FactionView extends ViewModule {
     setup({ game, ui, notify, onCenterCapital }) {
         this.game = game;
         this.ui = ui;
@@ -24,6 +24,9 @@ class FactionView {
         this.panel = document.getElementById('factions');
         this.panelBox = document.getElementById('factions-panel');
         this.log = document.getElementById('diplomacy-log');
+        this.listenMany(game, HUD_EVENTS, () => this.render());
+        this.listen(game, 'diplomacy:change', () => this.render());
+        this.listen(game, 'built', () => this.render());
         return this;
     }
 

@@ -36,3 +36,45 @@ class GameModule {
         for (const listener of [...this.listeners]) listener(...payload);
     }
 }
+
+/* ============================================================
+   SECTION: VIEW_MODULE
+   База для view-модулей (HUD): FactionView, PlayerView, TurnView,
+   SelectionView, ArmyView.
+
+   Менеджеры (GameModule) объявляют события через emit; view-модули их слушают.
+   Раньше все подписки жили в main.js — один список на всю страницу, и модуль
+   нельзя было переиспользовать, не тронув main. Теперь модуль сам подписывается
+   на шину в setup() через listen(...) и сам же отписывается через teardown().
+
+   Порядок подключения: как и GameModule — до менеджеров и view-модулей.
+   ============================================================ */
+
+class ViewModule {
+    constructor() {
+        this.subscriptions = [];
+    }
+
+    // Подписка на событие шины с запоминанием функции отписки.
+    listen(game, name, handler) {
+        const off = game.on(name, handler);
+        this.subscriptions.push(off);
+        return off;
+    }
+
+    // Подписка на несколько событий одним обработчиком.
+    listenMany(game, names, handler) {
+        for (const name of names) this.listen(game, name, handler);
+    }
+
+    // Снять все подписки (выгрузка модуля). Новая карта подписки не рвёт: шина живёт, пока живёт игра.
+    teardown() {
+        for (const off of this.subscriptions) off();
+        this.subscriptions = [];
+    }
+}
+
+// События, после которых панели игрока (фракции, ресурсы, выделение) показывают устаревшие
+// данные: любой ход и любое изменение владений/строений/армий. Панели дешёвые — перерисовываем
+// их все на каждое из этих событий (раньше это делал refreshPanels в main.js).
+const HUD_EVENTS = ['factions:change', 'construction:change', 'armies:change', 'turn:end'];

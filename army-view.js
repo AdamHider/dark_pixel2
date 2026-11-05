@@ -17,7 +17,7 @@
 
 const HIGHLIGHT = { MOVE: 1, ZONE: 2, TARGET: 4, SELF: 8 };    // виды подсветки (битовые флаги, см. map.highlights)
 
-class ArmyView {
+class ArmyView extends ViewModule {
     static get DEFAULTS() {
         return {
             animate: true,                 // двигать фигурки плавно (позиции между клетками — дробные координаты tile); false — телепорт
@@ -26,6 +26,7 @@ class ArmyView {
     }
 
     constructor(options = {}) {
+        super();
         this.options = { ...ArmyView.DEFAULTS, ...options };
         this.armies = null;
         this.selectedId = null;            // армия в фокусе (id) или null
@@ -37,8 +38,8 @@ class ArmyView {
 
     /* ---------- подключение ---------- */
 
-    // Один раз: зависимости и DOM. Вызывается из main.js после создания менеджеров.
-    // Изменения армий приходят событием 'armies:change' из game.js — на него подписывается main.js.
+    // Один раз: зависимости и DOM. Подписки на шину объявляет сам (ViewModule.listen).
+    // Изменения армий приходят событием 'armies:change', новая карта — 'built'.
     setup({ game, generator, renderer, construction, controls, info, ui, notify }) {
         this.game = game;
         this.armies = game.armies;
@@ -50,6 +51,15 @@ class ArmyView {
         this.info = info;
         this.ui = ui;
         this.notify = notify;
+
+        this.listen(game, 'armies:change', () => this.onArmiesChange());
+        this.listen(game, 'factions:change', () => this.syncHighlights());
+        this.listen(game, 'construction:change', () => { this.syncObjects(); this.syncHighlights(); });
+        this.listen(game, 'built', () => this.attach(this.generator));
+        this.listen(game, 'select', ({ tile }) => this.handleClick(tile));
+        this.listen(game, 'hover', tile => this.handleHover(tile));
+        this.listen(game, 'object:click', object => this.handleObjectClick(object));
+
         this.syncObjects();          // стартовые армии: сразу показываем спрайты (карта уже построена)
         return this;
     }
@@ -74,14 +84,13 @@ class ArmyView {
     focus(id) {
         this.selectedId = id;
         this.syncHighlights();
-        if (this.onSelection) this.onSelection();
+        this.game.emit('armies:focus', id);   // окно выделения перерисовывается по событию
     }
 
     // После любого приказа армии, найма и хода.
     onArmiesChange() {
         this.syncObjects();
         this.syncHighlights();
-        if (this.onChange) this.onChange();
     }
 
     describe(army) {

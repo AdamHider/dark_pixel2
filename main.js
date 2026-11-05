@@ -47,7 +47,11 @@ function notify(text) {
 
 /* ============================================================
    SECTION: WIRING
-   Сборка интерфейса: view-модули, их зависимости и подписки на шину игры.
+   Сборка интерфейса: view-модули и их зависимости.
+
+   Подписки на шину каждый модуль объявляет сам (ViewModule.listen), поэтому
+   здесь только создание модулей и то, что нельзя выразить событием: связь
+   окна выделения с панелью игрока (эдикт меняет экономику).
    ============================================================ */
 
 let armyView = null;
@@ -65,37 +69,14 @@ function connectUI() {
     factionView = new FactionView().setup({ game, ui: uiRenderer, notify, onCenterCapital: centerOnCapital });
     playerView = new PlayerView().setup({ game, ui: uiRenderer, onCapital: () => centerOnCapital(game.factions.playerFaction) });
     turnView = new TurnView().setup({ game });
-    selectionView = new SelectionView().setup({ game, ui: uiRenderer, notify });
-    selectionView.renderPlayer = () => playerView.render();   // эдикт меняет экономику: обновляем и окно «Экономика»
-
-    armyView = new ArmyView();
-    armyView.setup({
+    // ArmyView создаётся до SelectionView: оба слушают 'select', и приказы армии должны
+    // обработаться первыми (фокус), а карточка клетки — уже после (см. порядок подписок).
+    armyView = new ArmyView().setup({
         game, generator, renderer, construction: game.construction,
         controls: document.getElementById('army-controls'), info, ui: uiRenderer, notify
     });
-    armyView.onChange = () => refreshPanels();
-    armyView.onSelection = () => selectionView.refresh();
-    selectionView.armyView = armyView;
-
-    // Модули объявляют события в шину (game.js); здесь интерфейс на них подписывается.
-    game.on('factions:change', () => { armyView.syncHighlights(); refreshPanels(); });
-    game.on('construction:change', () => { armyView.syncObjects(); armyView.syncHighlights(); refreshPanels(); });
-    game.on('armies:change', () => armyView.onArmiesChange());
-    game.on('diplomacy:change', () => factionView.render());
-    game.on('turn:end', () => { turnView.refresh(); playerView.checkForecast(); refreshPanels(); });
-    game.on('select', ({ tile, region }) => {
-        armyView.handleClick(tile);            // фокус и приказы армий (до показа клетки: после хода карточка уже обновлена)
-        selectionView.show(tile, region);
-    });
-    game.on('hover', tile => armyView.handleHover(tile));
-    game.on('object:click', object => armyView.handleObjectClick(object));
-}
-
-// Обновить все панели интерфейса (после хода, приказа или смены фракций).
-function refreshPanels() {
-    factionView.render();
-    playerView.render();
-    selectionView.refresh();
+    selectionView = new SelectionView().setup({ game, ui: uiRenderer, armyView, notify });
+    selectionView.renderPlayer = () => playerView.render();   // эдикт меняет экономику: обновляем и окно «Экономика»
 }
 
 /* ============================================================
@@ -107,13 +88,14 @@ const seedInput = document.getElementById('seed');
 
 function buildMap() {
     if (turnView) turnView.stopAuto();
+    const first = !factionView;
     game.build(Number(seedInput.value) || 1);   // карта, менеджеры, стартовое наполнение и событие 'built' — в game.js
 
-    if (!factionView) connectUI();              // первый раз: создаём view-модули и подписки
-    else armyView.attach(generator);            // новая карта: сбросить фокус, спрайты и подсветку
-
-    turnView.refresh();
-    refreshPanels();
+    if (first) {
+        connectUI();                       // первый раз: создаём view-модули (менеджеры уже есть)
+        game.emit('built', game);          // ...и сообщаем им о готовой карте: их 'built' на первой сборке прошёл до их создания
+    }
+    // На следующих сборках view-модули обновляются сами по событию 'built'.
 }
 
 /* ============================================================

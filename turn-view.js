@@ -9,7 +9,7 @@
    Подключение: const view = new TurnView(); view.setup({ game, onError });
    ============================================================ */
 
-class TurnView {
+class TurnView extends ViewModule {
     setup({ game, onError }) {
         this.game = game;
         this.onError = onError;
@@ -22,6 +22,8 @@ class TurnView {
         this.autoInterval = document.getElementById('auto-interval');
         this.autoTimer = null;
         this.bind();
+        this.listen(game, 'turn:end', () => this.refresh());
+        this.listen(game, 'built', () => this.refresh());
         return this;
     }
 

@@ -26,7 +26,7 @@ index.html          — разметка и кнопки интерфейса
     map-painter.js    — РЕНДЕР: превращает логическую карту в холст с пикселями
     map-renderer.js   — КАМЕРА: показывает нужный кусок холста, зум, выделение клетки
     sprite-renderer.js — объекты поверх карты (города, армии), рисуются по конфигу
-    core-module.js    — БАЗА МЕНЕДЖЕРОВ: GameModule (attach, onChange, emit)
+    core-module.js    — БАЗА МОДУЛЕЙ: GameModule (attach, onChange, emit) и ViewModule (listen, teardown)
     faction-manager.js — ФРАКЦИИ: территории, ресурсы, доход (отдельный от карты модуль)
     *-manager.js      — МОДУЛИ: turn, economy, construction, army, diplomacy
     *-view.js         — HUD-МОДУЛИ: army, faction, player, turn, selection
@@ -38,10 +38,13 @@ index.html          — разметка и кнопки интерфейса
 `faction-economy.js` → `construction-manager.js` → `army-manager.js` →
 `diplomacy-manager.js` → `army-view.js` → `game.js` → `ui-renderer.js` → `faction-view.js` →
 `player-view.js` → `turn-view.js` → `selection-view.js` → `main.js`. `core-module.js` идёт
-перед менеджерами: все `*-manager.js` наследуют `GameModule`. `faction-manager.js` берёт
+перед менеджерами: все `*-manager.js` наследуют `GameModule`, а все `*-view.js` — `ViewModule`.
+`faction-manager.js` берёт
 константы `Resource`, `ResourceInfo`, `Terrain` из `map-generator.js`, поэтому идёт после
 него. `*-view.js` — модули HUD: они читают состояние менеджеров через `Game` и рисуют
 DOM, но игровых правил не содержат; `UIRenderer` (`ui-renderer.js`) — общий сборщик DOM.
+Каждый view-модуль **сам** подписывается на события шины в `setup()` (`ViewModule.listen`)
+и сам же отписывается в `teardown()` — `main.js` больше не держит список подписок.
 
 Ключевая идея производительности: **карта рисуется один раз** в большой скрытый холст
 в масштабе 1:1 (`MapPainter`), а `MapRenderer` только показывает из него нужный
@@ -663,7 +666,7 @@ createNoiseLayers → allocateLayers
 |---|---|
 | `seasons.js` | `SEASONS` (палитры + `SEASON_ORDER`), `DARK_SEASONS` (тёмный стиль, `toneHex`, `DARK_TONES`, `DARK_EXTRA`) |
 | `map-renderer.js` | `MAP_RENDERER`, `PUBLIC`, `FACTIONS`, `OBJECTS`, `CAMERA`, `SELECTION`, `RENDER`, `INPUT` |
-| `core-module.js` | `GAME_MODULE` (база `GameModule`: `attach`, `onChange`, `emit`) |
+| `core-module.js` | `GAME_MODULE` (база `GameModule`: `attach`, `onChange`, `emit`), `VIEW_MODULE` (база `ViewModule`: `listen`, `listenMany`, `teardown`, `HUD_EVENTS`) |
 | `faction-manager.js` | `FACTION_MANAGER`, `STATE`, `CONTROL`, `READ`, `START_FACTIONS` |
 | `economy-manager.js` | `ECONOMY_MANAGER`, `STATE`, `STEP`, `READ`, `SAVE`, `PLACEHOLDER` |
 | `turn-manager.js` | `TURN_MANAGER`, `CALENDAR`, `PHASES`, `TURN`, `SAVE` |
