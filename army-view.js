@@ -38,8 +38,11 @@ class ArmyView {
     /* ---------- подключение ---------- */
 
     // Один раз: зависимости и DOM. Вызывается из main.js после создания менеджеров.
-    setup({ armies, factions, generator, renderer, construction, controls, info, ui, notify }) {
-        this.factions = factions;
+    // Изменения армий приходят событием 'armies:change' из game.js — на него подписывается main.js.
+    setup({ game, generator, renderer, construction, controls, info, ui, notify }) {
+        this.game = game;
+        this.armies = game.armies;
+        this.factions = game.factions;
         this.generator = generator;
         this.renderer = renderer;
         this.construction = construction;
@@ -47,13 +50,8 @@ class ArmyView {
         this.info = info;
         this.ui = ui;
         this.notify = notify;
-        this.attachArmies(armies);
+        this.syncObjects();          // стартовые армии: сразу показываем спрайты (карта уже построена)
         return this;
-    }
-
-    attachArmies(armies) {
-        this.armies = armies;
-        armies.onChange(() => this.onArmiesChange());
     }
 
     // Новая карта: сбросить фокус и анимацию.

@@ -52,14 +52,15 @@ function __test() {
     const ui = { renderArmyControls(controls, model, handlers) { lastArmyControls = model; lastHandlers = handlers; } };
     const notices = [];
     const view = new ArmyView().setup({
-        armies, factions, generator, renderer, construction,
+        game: { armies, factions }, generator, renderer, construction,
         controls: {}, info: {}, ui, notify: text => notices.push(text)
     });
 
     const player = factions.playerFaction;
     const size = generator.size;
 
-    check('спрайты: по объекту на каждую армию', () => {
+    check('спрайты: setup сразу рисует по объекту на каждую армию', () => {
+        __assert(renderer.objects && renderer.objects.length === armies.armies.length, 'setup не нарисовал армии');
         view.syncObjects();
         __assert(renderer.objects.length === armies.armies.length, 'число объектов != числу армий');
         __assert(renderer.objects.every(o => String(o.id).startsWith('army-')), 'id объекта не army-*');

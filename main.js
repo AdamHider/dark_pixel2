@@ -70,7 +70,7 @@ function connectUI() {
 
     armyView = new ArmyView();
     armyView.setup({
-        armies: game.armies, factions: game.factions, generator, renderer, construction: game.construction,
+        game, generator, renderer, construction: game.construction,
         controls: document.getElementById('army-controls'), info, ui: uiRenderer, notify
     });
     armyView.onChange = () => refreshPanels();
@@ -80,6 +80,7 @@ function connectUI() {
     // Модули объявляют события в шину (game.js); здесь интерфейс на них подписывается.
     game.on('factions:change', () => { armyView.syncHighlights(); refreshPanels(); });
     game.on('construction:change', () => { armyView.syncObjects(); armyView.syncHighlights(); refreshPanels(); });
+    game.on('armies:change', () => armyView.onArmiesChange());
     game.on('diplomacy:change', () => factionView.render());
     game.on('turn:end', () => { turnView.refresh(); playerView.checkForecast(); refreshPanels(); });
     game.on('select', ({ tile, region }) => {

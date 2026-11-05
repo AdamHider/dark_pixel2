@@ -27,7 +27,7 @@ function __test() {
 
     const game = new Game({}, { size: 120 });
     const events = [];
-    for (const name of ['built', 'turn:end', 'factions:change', 'construction:change', 'diplomacy:change', 'select', 'hover', 'object:click']) {
+    for (const name of ['built', 'turn:end', 'factions:change', 'construction:change', 'armies:change', 'diplomacy:change', 'select', 'hover', 'object:click']) {
         game.on(name, payload => events.push({ name, payload }));
     }
     const seen = name => events.filter(e => e.name === name);
@@ -48,6 +48,16 @@ function __test() {
         __assert(seen('turn:end').length === 1, 'turn:end не пришло');
         __assert(events.length > before, 'шина молчала');
         __assert(game.economy.getFactionEconomy(0), 'нет экономики фракции');
+    });
+
+    check('армии: изменение армий объявляется в шину (armies:change)', () => {
+        const army = game.armies.armiesOf(game.factions.playerFaction.id)[0];
+        __assert(army, 'нет армии игрока');
+        const before = seen('armies:change').length;
+        game.armies.disband(army.id);
+        const after = seen('armies:change');
+        __assert(after.length === before + 1, 'armies:change не пришло');
+        __assert(after[after.length - 1].payload.action === 'disband', 'не disband в payload');
     });
 
     check('ввод: рендерер шлёт select/hover/object:click в шину', () => {

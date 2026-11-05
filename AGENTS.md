@@ -14,10 +14,10 @@ dependencies. Scripts are loaded in `index.html` in dependency order:
 `core-module.js` defines `GameModule`, the base class every `*-manager.js` extends (it
 owns `attach`, `onChange`, `emit`). It must load before any manager. `game.js` defines
 `Game`, the facade that creates the map, renderer and managers and exposes an event bus
-(`game.on('turn:end' | 'factions:change' | 'construction:change' | 'diplomacy:change' |
-'select' | 'hover' | 'object:click', ...)`); `main.js` is only DOM wiring. `faction-manager.js`
-reads `Resource`, `ResourceInfo`, `Terrain` from `map-generator.js`, so it must load after
-it.
+(`game.on('turn:end' | 'factions:change' | 'construction:change' | 'armies:change' |
+'diplomacy:change' | 'select' | 'hover' | 'object:click', ...)`); `main.js` is only DOM
+wiring. `faction-manager.js` reads `Resource`, `ResourceInfo`, `Terrain` from
+`map-generator.js`, so it must load after it.
 
 `*-view.js` modules own the HUD: `ArmyView` (army input/highlights/panel),
 `FactionView` (factions + diplomacy panel), `PlayerView` (resource bar, "Моя фракция",
@@ -31,8 +31,8 @@ an offscreen 1:1 canvas; `MapRenderer` is just a camera over that canvas. `Facti
 is a separate module that owns faction state and hands it to the map via
 `map.applyFactionState` (the map only stores and shows it). `Game` (`game.js`) is the
 facade: it owns the map, renderer and all managers, and exposes a global event bus so
-modules react to `turn:end`, `factions:change`, `select`, ... instead of reaching into each
-other.
+modules react to `turn:end`, `factions:change`, `armies:change`, `select`, ... instead of
+reaching into each other.
 
 See `CODE_GUIDE.md` for the full function-by-function guide and `OPTIMIZATION.md` for the
 duplication/refactor backlog.

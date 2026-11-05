@@ -8,6 +8,7 @@
      'turn:end'            конец хода (контекст TurnManager)
      'factions:change'     фракции изменились (причина)
      'construction:change' постройки и мосты изменились (запись изменения)
+     'armies:change'       армии изменились (запись изменения: найм, ход, бой, роспуск)
      'diplomacy:change'    отношения изменились (запись журнала)
      'select'              клик по клетке: { tile, region }
      'hover'               наведение на клетку: tile | null
@@ -104,6 +105,7 @@ class Game {
         this.turns.onTurn(context => this.emit('turn:end', context));
         this.factions.onChange((manager, reason) => this.emit('factions:change', reason));
         this.construction.onChange(change => this.emit('construction:change', change));
+        this.armies.onChange(change => this.emit('armies:change', change));
         this.diplomacy.onChange(event => this.emit('diplomacy:change', event));
 
         this.renderer.onSelect = (tile, region) => this.emit('select', { tile, region });
