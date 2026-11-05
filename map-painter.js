@@ -4162,40 +4162,141 @@ MapPaint.Chunks = class Chunks {
 /* ============================================================
    Highlights — подсветка клеток интерфейсом
 
-   map.highlights[клетка] — вид подсветки (его задаёт интерфейс через map.applyStructureState): 1 — куда армия может дойти, 2 — её зона
-   перехвата и захвата, 3 — цели для атаки, 4 — выбранная армия. Подсветка рисуется в слое фракций (Territories.paint), как и границы:
-   карта при её смене не перерисовывается, масштаб не сбрасывается — так же легко, как граница выбранного региона.
-   Заливка полупрозрачная, а граница рисуется только там, где вид подсветки у соседней клетки другой: получается контур области.
+   map.highlights[клетка] — набор битовых флагов (его задаёт интерфейс через map.applyStructureState): 1 — область движения армии,
+   2 — зона перехвата (показывается при наведении на армию), 4 — цель для атаки, 8 — выбранная армия. Подсветка рисуется в слое фракций
+   (Territories.paint), как и границы: карта при её смене не перерисовывается, масштаб не сбрасывается.
+
+   Области (движение, перехват) не квадраты по клеткам, а гладкие пятна: маска клеток размывается и считается по пикселям (контур — там,
+   где размытое значение равно половине), так что углы закруглены. Пятно обрезается по земле (как границы территорий: по берегу и
+   рекам) и подсвечивается мягче к середине: у края заливка гуще. Цель — круг, выбранная армия — кольцо.
    ============================================================ */
 {
-    const KINDS = {
-        1: { color: '#4aa8ff', fill: 0.2, edge: 0.85 },   // достижимо
-        2: { color: '#ffd24a', fill: 0.28, edge: 0.9 },   // зона перехвата и захвата
-        3: { color: '#ff4a3a', fill: 0.34, edge: 0.95 },  // цель атаки
-        4: { color: '#ffffff', fill: 0.08, edge: 1 }      // выбранная армия
-    };
+    const AREA_KERNEL = [0, 4, 0];                 // размытие маски клеток: чем «острее» центр, тем точнее пятно повторяет клетки, а углы — мягче
+    const AREA_DISC = 0.58;                        // радиус круга вокруг центра клетки (в клетках): одиночная клетка остаётся круглым пятном
+
+    const KINDS = [
+        { flag: 1, color: '#4aa8ff', fill: 0.18, edge: 1, shape: 'area' },     // область движения
+        { flag: 2, color: '#ffd24a', fill: 0.24, edge: 0.95, shape: 'area' },    // зона перехвата и захвата
+        { flag: 4, color: '#ff4a3a', fill: 0.4, edge: 1, shape: 'disc' },        // цель атаки
+        { flag: 8, color: '#ffffff', fill: 0.06, edge: 1, shape: 'ring' }        // выбранная армия
+    ];
 
     MapPaint.Highlights = {
         // Накладывает подсветку на массив пикселей слоя (ABGR), учитывая то, что в нём уже нарисовано (территории).
         compose(p, pixels) {
             const { map } = p;
-            if (!map.highlights || !map.highlights.some(kind => kind > 0)) return;
-            const { size, T, W } = p.dim;
-            const colors = {};
-            for (const [kind, style] of Object.entries(KINDS)) colors[kind] = hexToPacked(style.color);
-            const kindAt = (x, y) => (x < 0 || y < 0 || x >= size || y >= size ? 0 : map.highlights[y * size + x]);
+            if (!map.highlights || !map.highlights.some(flags => flags > 0)) return;
+            const owner = MapPaint.PixelRegions.build(p);                        // пиксели суши (owner >= 0): по ним подсветка обрезается
+            for (const style of KINDS) {
+                const tiles = [];
+                for (let i = 0; i < map.highlights.length; i++) if (map.highlights[i] & style.flag) tiles.push(i);
+                if (tiles.length === 0) continue;
+                const color = hexToPacked(style.color);
+                if (style.shape === 'area') this.paintArea(p, pixels, tiles, style, color, owner);
+                else this.paintMarker(p, pixels, tiles, style, color);
+            }
+        },
 
-            for (let y = 0; y < size; y++) {
-                for (let x = 0; x < size; x++) {
-                    const kind = kindAt(x, y);
-                    if (!kind) continue;
-                    const style = KINDS[kind], color = colors[kind];
-                    const edges = [kindAt(x, y - 1) !== kind, kindAt(x + 1, y) !== kind, kindAt(x, y + 1) !== kind, kindAt(x - 1, y) !== kind];   // север, восток, юг, запад
-                    for (let dy = 0; dy < T; dy++) {
-                        for (let dx = 0; dx < T; dx++) {
-                            const onEdge = (edges[0] && dy === 0) || (edges[2] && dy === T - 1) || (edges[3] && dx === 0) || (edges[1] && dx === T - 1);
-                            this.blendInto(pixels, (y * T + dy) * W + x * T + dx, color, onEdge ? style.edge : style.fill);
+        /* Гладкая область: маска клеток (с запасом в клетку по краям) -> размытие -> билинейная выборка по пикселям -> порог 0,5
+           (граница ровно по краю клетки на прямых участках, закругление на углах). Обрезка по суше, затем «глубина» от края (до трёх пикселей):
+           край — самая яркая линия, к середине заливка слабеет. */
+        paintArea(p, pixels, tiles, style, color, owner) {
+            const { size, T, W } = p.dim;
+            const xs = tiles.map(t => t % size), ys = tiles.map(t => Math.floor(t / size));
+            const x0 = Math.max(0, Math.min(...xs) - 1), x1 = Math.min(size - 1, Math.max(...xs) + 1);
+            const y0 = Math.max(0, Math.min(...ys) - 1), y1 = Math.min(size - 1, Math.max(...ys) + 1);
+            const w = x1 - x0 + 1, h = y1 - y0 + 1;
+
+            const mask = new Float32Array(w * h);
+            for (let n = 0; n < tiles.length; n++) mask[(ys[n] - y0) * w + (xs[n] - x0)] = 1;
+            const blurred = this.blur(mask, w, h);
+            const sample = (u, v) => {                                           // билинейно по центрам клеток; вне рамки — ноль
+                const i = Math.floor(u), j = Math.floor(v), fu = u - i, fv = v - j;
+                const at = (a, b) => (a < 0 || b < 0 || a >= w || b >= h ? 0 : blurred[b * w + a]);
+                return (at(i, j) * (1 - fu) + at(i + 1, j) * fu) * (1 - fv) + (at(i, j + 1) * (1 - fu) + at(i + 1, j + 1) * fu) * fv;
+            };
+
+            const pw = w * T, ph = h * T;
+            const inside = new Uint8Array(pw * ph);
+            for (let py = 0; py < ph; py++) {
+                for (let px = 0; px < pw; px++) {
+                    const gx = x0 * T + px, gy = y0 * T + py;
+                    if (owner[gy * W + gx] < 0) continue;                        // вода и реки: подсветка по ним обрывается
+                    let on = sample((px + 0.5) / T - 0.5, (py + 0.5) / T - 0.5) >= 0.5;
+                    if (!on) {                                                   // одиночные клетки и тонкие перешейки: круг вокруг центра клетки
+                        const tx = Math.floor(px / T), ty = Math.floor(py / T);
+                        if (mask[ty * w + tx] > 0) on = Math.hypot(px - (tx + 0.5) * T, py - (ty + 0.5) * T) <= AREA_DISC * T;
+                    }
+                    inside[py * pw + px] = on ? 1 : 0;
+                }
+            }
+
+            // глубина от края: 1 — пиксель маски, у которого есть сосед (по четырём сторонам) вне маски; дальше — по слоям до трёх
+            const depth = new Uint8Array(pw * ph);
+            let frontier = [];
+            for (let py = 0; py < ph; py++) {
+                for (let px = 0; px < pw; px++) {
+                    const k = py * pw + px;
+                    if (!inside[k]) continue;
+                    const edge = px === 0 || py === 0 || px === pw - 1 || py === ph - 1 || !inside[k - 1] || !inside[k + 1] || !inside[k - pw] || !inside[k + pw];
+                    if (edge) { depth[k] = 1; frontier.push(k); }
+                }
+            }
+            for (let layer = 2; layer <= 3; layer++) {
+                const next = [];
+                for (const k of frontier) {
+                    for (const j of [k - 1, k + 1, k - pw, k + pw]) {
+                        if (j >= 0 && j < depth.length && inside[j] && depth[j] === 0) { depth[j] = layer; next.push(j); }
+                    }
+                }
+                frontier = next;
+            }
+
+            const alphaAt = [0, style.edge, style.edge * 0.7 + style.fill * 0.3, style.fill * 1.35];    // по глубине 1, 2, 3; дальше — просто заливка
+            for (let py = 0; py < ph; py++) {
+                for (let px = 0; px < pw; px++) {
+                    const k = py * pw + px;
+                    if (!inside[k]) continue;
+                    this.blendInto(pixels, (y0 * T + py) * W + x0 * T + px, color, depth[k] > 0 ? alphaAt[depth[k]] : style.fill);
+                }
+            }
+        },
+
+        // Размытие маски ядром AREA_KERNEL по строкам и столбцам (вне рамки — ноль).
+        blur(mask, w, h) {
+            const sum = AREA_KERNEL.reduce((a, b) => a + b, 0), half = (AREA_KERNEL.length - 1) / 2;
+            const pass = (source, horizontal) => {
+                const out = new Float32Array(w * h);
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        let value = 0;
+                        for (let d = -half; d <= half; d++) {
+                            const xx = horizontal ? x + d : x, yy = horizontal ? y : y + d;
+                            if (xx >= 0 && yy >= 0 && xx < w && yy < h) value += source[yy * w + xx] * AREA_KERNEL[d + half];
                         }
+                        out[y * w + x] = value / sum;
+                    }
+                }
+                return out;
+            };
+            return pass(pass(mask, true), false);
+        },
+
+        // Круг (цель) и кольцо (выбранная армия) в центре клетки, со сглаженной кромкой.
+        paintMarker(p, pixels, tiles, style, color) {
+            const { size, T, W } = p.dim;
+            const radius = (style.shape === 'ring' ? 0.46 : 0.4) * T, band = Math.max(1.2, T / 9);
+            for (const tile of tiles) {
+                const cx = (tile % size) * T + T / 2, cy = Math.floor(tile / size) * T + T / 2;
+                for (let y = Math.floor(cy - radius - 2); y <= Math.ceil(cy + radius + 2); y++) {
+                    for (let x = Math.floor(cx - radius - 2); x <= Math.ceil(cx + radius + 2); x++) {
+                        if (x < 0 || y < 0 || x >= W || y >= W) continue;
+                        const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+                        const soft = Math.min(1, Math.max(0, radius + 0.5 - d));                  // сглаживание внешней кромки
+                        if (soft === 0) continue;
+                        const onBand = d > radius - band;                                          // кромка — кольцо толщиной band
+                        const alpha = onBand ? style.edge : style.fill;
+                        this.blendInto(pixels, y * W + x, color, alpha * soft);
                     }
                 }
             }

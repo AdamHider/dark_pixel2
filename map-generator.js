@@ -1551,7 +1551,8 @@ const MapGen = {
         /* state — любое из:
              structures: [{ type, tile, faction }]     полный список башен (мосты в нём не нужны: они в crossing)
              crossingChanges: [{ tile, crossing }]     мост построен (1) или разрушен (0) на клетке реки
-             highlights: [{ tile, kind }]              подсветка клеток (полный список; [] — снять): 1 достижимо, 2 зона, 3 цель, 4 выбрано
+             highlights: [{ tile, kind }]              подсветка клеток (полный список; [] — снять); kind — битовый флаг: 1 область движения,
+                                                       2 зона перехвата, 4 цель атаки, 8 выбранная армия
                                                        (рисуется в слое фракций, без перерисовки карты)
              version
            Слушателям уходит { visualChanged }: true, если изменилось то, что видно на карте. */
@@ -1588,7 +1589,7 @@ const MapGen = {
 
         applyHighlights(map, highlights) {
             const next = new Uint8Array(map.highlights.length);
-            for (const { tile, kind } of highlights) next[tile] = Math.max(next[tile], kind);   // при наложении побеждает более «важный» (больший) вид
+            for (const { tile, kind } of highlights) next[tile] |= kind;                          // виды — битовые флаги: клетка может быть в нескольких
             if (next.every((kind, i) => kind === map.highlights[i])) return false;
             map.highlights = next;
             return true;
@@ -1840,7 +1841,7 @@ class MapGenerator {
         this.structures = [];                         // постройки (строит construction manager): { type: 'tower' | 'army' | 'bridge', tile, faction }
         this.structureAt = new Int32Array(this.size * this.size).fill(-1);   // индекс постройки в structures для каждой клетки, -1 — пусто
         this.structureVersion = 0;                    // версия состояния построек
-        this.highlights = new Uint8Array(this.size * this.size);   // подсветка клеток интерфейсом (HIGHLIGHT_KINDS): достижимость армии, зона перехвата, цели
+        this.highlights = new Uint8Array(this.size * this.size);   // подсветка клеток интерфейсом (битовые флаги): область движения, зона перехвата, цели, выбранная армия
     }
 
     /* ---------- Сетка: координаты, соседи, обходы ---------- */
